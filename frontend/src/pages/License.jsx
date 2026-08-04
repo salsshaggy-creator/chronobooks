@@ -103,8 +103,20 @@ function CompanyLicenseView() {
           </div>
           <div style={{ fontSize: 11, color: 'var(--cb-text-secondary)', marginBottom: 14 }}>{seatPct}% of seats used</div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" title="Contact your Super Administrator to change plans" style={{ ...buttonStyle, opacity: 0.7 }}>Upgrade plan</button>
-            <button type="button" title="Contact your Super Administrator to renew" style={{ ...buttonStyle, background: 'var(--cb-bg)', color: 'var(--cb-text-primary)', opacity: 0.7 }}>Renew now</button>
+            <button
+              type="button"
+              onClick={() => document.getElementById('pricing-table-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              style={buttonStyle}
+            >
+              Upgrade plan
+            </button>
+            <button
+              type="button"
+              onClick={() => document.getElementById('pricing-table-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              style={{ ...buttonStyle, background: 'var(--cb-bg)', color: 'var(--cb-text-primary)' }}
+            >
+              Renew now
+            </button>
           </div>
         </div>
       </div>
@@ -146,6 +158,7 @@ function CompanyLicenseView() {
         </div>
       </div>
 
+      <div id="pricing-table-anchor" />
       <PricingTable tiers={tiers} addons={addons} editable={false} style={{ marginTop: 16 }} />
     </div>
   );
@@ -374,6 +387,9 @@ function PricingTable({ tiers, addons, editable, onChanged, style }) {
   const [tierDraft, setTierDraft] = useState({});
   const [editingAddon, setEditingAddon] = useState(null);
   const [addonDraft, setAddonDraft] = useState({});
+  const [requestingTierId, setRequestingTierId] = useState(null);
+  const [requestedTierId, setRequestedTierId] = useState(null);
+  const [requestError, setRequestError] = useState('');
 
   async function saveTier(id) {
     await api.updatePricingTier(id, { planName: tierDraft.plan_name, companiesIncluded: tierDraft.companies_included, usersIncluded: tierDraft.users_included, annualFee: tierDraft.annual_fee });
@@ -384,6 +400,21 @@ function PricingTable({ tiers, addons, editable, onChanged, style }) {
     await api.updatePricingAddon(id, { label: addonDraft.label, annualFee: addonDraft.annual_fee });
     setEditingAddon(null);
     onChanged && onChanged();
+  }
+
+  /** Company-side "Upgrade" — no payment processor wired up, so this just records the
+   * request; it shows up in the Super Administrator's Pending upgrade requests panel. */
+  async function requestTier(id) {
+    setRequestingTierId(id);
+    setRequestError('');
+    try {
+      await api.requestUpgrade(id);
+      setRequestedTierId(id);
+    } catch (err) {
+      setRequestError(err.message);
+    } finally {
+      setRequestingTierId(null);
+    }
   }
 
   return (
@@ -420,7 +451,14 @@ function PricingTable({ tiers, addons, editable, onChanged, style }) {
                       {editable ? (
                         <button type="button" onClick={() => { setEditingTier(t.id); setTierDraft(t); }} style={linkButtonStyle}>✎ Edit</button>
                       ) : (
-                        <button type="button" title="Contact your Super Administrator to change plans" style={{ ...smallButtonStyle, opacity: 0.7 }}>Upgrade</button>
+                        <button
+                          type="button"
+                          onClick={() => requestTier(t.id)}
+                          disabled={requestingTierId === t.id}
+                          style={smallButtonStyle}
+                        >
+                          {requestingTierId === t.id ? 'Requesting…' : requestedTierId === t.id ? 'Requested ✓' : 'Upgrade'}
+                        </button>
                       )}
                     </td>
                   </>
@@ -429,6 +467,14 @@ function PricingTable({ tiers, addons, editable, onChanged, style }) {
             ))}
           </tbody>
         </table>
+        {!editable && requestedTierId && (
+          <div style={{ marginTop: 10, fontSize: 12, color: 'var(--cb-success)' }}>
+            ✓ Request sent — your Super Administrator will review and activate it.
+          </div>
+        )}
+        {!editable && requestError && (
+          <div style={{ marginTop: 10, fontSize: 12, color: 'var(--cb-danger)' }}>{requestError}</div>
+        )}
       </div>
 
       <div style={{ ...cardStyle, marginTop: 14 }}>

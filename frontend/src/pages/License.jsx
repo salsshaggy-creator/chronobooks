@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 
-const MODULES = [
+export const MODULES = [
   { key: 'inventoryEnabled', label: 'Inventory', description: 'Stock tracking, receipts, and issues.', icon: '📦' },
   { key: 'fixedAssetsEnabled', label: 'Fixed Assets', description: 'Asset registration and depreciation.', icon: '🏷️' },
   { key: 'budgetingEnabled', label: 'Budgeting', description: 'Budgets vs actuals.', icon: '🎯' },
@@ -157,6 +157,7 @@ function SuperAdminLicenseView() {
   const [current, setCurrent] = useState(null);
   const [tiers, setTiers] = useState([]);
   const [addons, setAddons] = useState([]);
+  const [upgradeRequests, setUpgradeRequests] = useState([]);
   const [form, setForm] = useState({ licenseType: 'paid', planName: '', userLimit: 5, expiryYears: 1, modules: {}, aiAssistantAllowance: 'none' });
   const [confirmName, setConfirmName] = useState('');
   const [error, setError] = useState('');
@@ -166,16 +167,37 @@ function SuperAdminLicenseView() {
     api.listSystemCompanies().then((r) => setCompanies(r.companies)).catch((err) => setError(err.message));
     api.listPricingTiers().then((r) => setTiers(r.tiers)).catch(() => {});
     api.listPricingAddons().then((r) => setAddons(r.addons)).catch(() => {});
+    api.listUpgradeRequests().then((r) => setUpgradeRequests(r.requests)).catch(() => {});
   }
   useEffect(load, []);
+
+  const [reviewTierName, setReviewTierName] = useState(null);
+
+  /** Jump the license generator to this company and pre-fill it from the tier they asked
+   * for -- deferred to the selectedCompanyId effect below (via reviewTierName) so it wins
+   * over that effect's own form reset instead of racing it. */
+  function reviewRequest(req) {
+    setSelectedCompanyId(req.companyId);
+    setReviewTierName(req.requestedPlanName);
+    document.getElementById('license-generator-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   useEffect(() => {
     if (!selectedCompanyId) { setCurrent(null); return; }
     api.getCompanyLicense(selectedCompanyId).then((c) => {
       setCurrent(c);
+      if (reviewTierName) {
+        const tier = tiers.find((t) => t.plan_name === reviewTierName);
+        setReviewTierName(null);
+        if (tier) {
+          const modules = Object.fromEntries(MODULES.map((m) => [m.key, (tier.modulesIncluded || []).includes(m.key)]));
+          setForm({ licenseType: 'paid', planName: tier.plan_name, userLimit: tier.userLimitNumeric || c.userLimit, expiryYears: 1, modules, aiAssistantAllowance: 'none' });
+          return;
+        }
+      }
       setForm({ licenseType: c.licenseType, planName: c.planName, userLimit: c.userLimit, expiryYears: 1, modules: { ...c.modules }, aiAssistantAllowance: 'none' });
     }).catch((err) => setError(err.message));
-  }, [selectedCompanyId]);
+  }, [selectedCompanyId, reviewTierName, tiers]);
 
   function applyPreset(preset) {
     const all = Object.fromEntries(MODULES.map((m) => [m.key, preset === 'full']));
@@ -195,6 +217,7 @@ function SuperAdminLicenseView() {
       setSaved('License generated and activated.');
       const c = await api.getCompanyLicense(selectedCompanyId);
       setCurrent(c);
+      api.listUpgradeRequests().then((r) => setUpgradeRequests(r.requests)).catch(() => {});
     } catch (err) {
       setError(err.message);
     }
@@ -223,7 +246,29 @@ function SuperAdminLicenseView() {
         Manage ChronoBooks licenses — view status, seat usage, and renewal options for any customer company.
       </p>
 
-      <form onSubmit={handleGenerate} style={{ ...cardStyle, background: '#fdf6e8', border: '1px solid var(--cb-amber-400)', marginBottom: 16 }}>
+      {upgradeRequests.length > 0 && (
+        <div style={{ ...cardStyle, background: '#e8f2fd', border: '1px solid var(--cb-primary-400)', marginBottom: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>🔔 Pending upgrade requests ({upgradeRequests.length})</div>
+          <div style={{ fontSize: 11, color: 'var(--cb-text-secondary)', marginBottom: 12 }}>
+            These companies picked a plan from their upgrade screen — review and activate below.
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <tbody>
+              {upgradeRequests.map((r) => (
+                <tr key={r.companyId} style={{ borderTop: '1px solid var(--cb-border)' }}>
+                  <td style={tdStyle}><strong>{r.companyName}</strong></td>
+                  <td style={tdStyle}>Currently: {r.currentPlanName}</td>
+                  <td style={tdStyle}>Requested: <strong>{r.requestedPlanName}</strong></td>
+                  <td style={{ ...tdStyle, color: 'var(--cb-text-secondary)' }}>{new Date(r.requestedAt).toLocaleDateString()}</td>
+                  <td style={tdStyle}><button type="button" onClick={() => reviewRequest(r)} style={smallButtonStyle}>Review &amp; activate</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <form id="license-generator-form" onSubmit={handleGenerate} style={{ ...cardStyle, background: '#fdf6e8', border: '1px solid var(--cb-amber-400)', marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 14 }}>
           <div style={{ fontSize: 14, fontWeight: 700 }}>🔑 Super admin — license generator</div>
           <div style={{ fontSize: 11, color: 'var(--cb-text-secondary)' }}>Issue or update a license for any customer company</div>

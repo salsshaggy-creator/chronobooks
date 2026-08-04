@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const db = require('../config/db');
 const { validatePasswordAgainstPolicy } = require('../utils/passwordPolicy');
+const { seatUsage } = require('./license.controller');
 
 async function listUsers(req, res) {
   const { companyId } = req.user;
@@ -78,6 +79,19 @@ async function createUser(req, res) {
 
   const existing = await db.query(`SELECT id FROM users WHERE company_id = $1 AND email = $2`, [companyId, email]);
   if (existing.rows[0]) return res.status(409).json({ error: 'A user with that email already exists in this company.' });
+
+  // Seat cap (write-up: self-serve companies are limited to 2 users) -- applies to every
+  // company via its user_limit column, not just self-serve ones, so a Super Admin's
+  // license generator remains the single source of truth for how many seats a company
+  // has bought.
+  const companyRes = await db.query(`SELECT user_limit FROM companies WHERE id = $1`, [companyId]);
+  const userLimit = companyRes.rows[0]?.user_limit;
+  if (userLimit != null) {
+    const used = await seatUsage(companyId);
+    if (used >= userLimit) {
+      return res.status(403).json({ error: `You've reached your plan's limit of ${userLimit} user${userLimit === 1 ? '' : 's'}. Upgrade your plan to add more.`, code: 'SEAT_LIMIT_REACHED' });
+    }
+  }
 
   const passwordHash = await bcrypt.hash(password, 10);
   const userId = crypto.randomUUID();

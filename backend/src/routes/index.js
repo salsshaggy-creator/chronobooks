@@ -2,6 +2,7 @@ const express = require('express');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const authController = require('../controllers/auth.controller');
+const signupController = require('../controllers/signup.controller');
 const dashboardController = require('../controllers/dashboard.controller');
 const expenseController = require('../controllers/expense.controller');
 const customerController = require('../controllers/customer.controller');
@@ -63,6 +64,12 @@ router.get('/auth/companies', requireAuth, asyncHandler(authController.listMyCom
 router.post('/auth/switch-company', requireAuth, asyncHandler(authController.switchCompany));
 router.post('/auth/change-password', requireAuth, asyncHandler(authController.changePassword));
 
+router.post('/auth/register', asyncHandler(signupController.register));
+router.post('/auth/verify-email', asyncHandler(signupController.verifyEmail));
+router.post('/auth/complete-setup', requireAuth, asyncHandler(signupController.completeSetup));
+router.post('/auth/request-password-reset', asyncHandler(signupController.requestPasswordReset));
+router.post('/auth/reset-password', asyncHandler(signupController.resetPassword));
+
 router.get('/dashboard/summary', requireAuth, asyncHandler(dashboardController.summary));
 
 router.get('/expenses', requireAuth, asyncHandler(expenseController.listExpenses));
@@ -118,6 +125,8 @@ router.put('/license/pricing-tiers/:tierId', requireAuth, requireRole('super_adm
 router.put('/license/pricing-addons/:addonId', requireAuth, requireRole('super_administrator'), asyncHandler(licenseController.updatePricingAddon));
 router.get('/license/company/:companyId', requireAuth, requireRole('super_administrator'), asyncHandler(licenseController.getCompanyLicense));
 router.post('/license/generate', requireAuth, requireRole('super_administrator'), asyncHandler(licenseController.generateLicense));
+router.post('/license/request-upgrade', requireAuth, requireRole(...ADMIN_ROLES), asyncHandler(licenseController.requestUpgrade));
+router.get('/license/upgrade-requests', requireAuth, requireRole('super_administrator'), asyncHandler(licenseController.listUpgradeRequests));
 router.delete('/system/companies/:companyId', requireAuth, requireRole('super_administrator'), asyncHandler(licenseController.deleteCompany));
 
 router.get('/bank-accounts', requireAuth, asyncHandler(bankController.listBankAccounts));

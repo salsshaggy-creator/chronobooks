@@ -78,6 +78,8 @@ function toApiShape(company) {
     out[apiKey] = value;
   }
   out.id = company.id;
+  out.setupCompleted = !!company.setup_completed;
+  out.selfServe = !!company.self_serve;
   return out;
 }
 

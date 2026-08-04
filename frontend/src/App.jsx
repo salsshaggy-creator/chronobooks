@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, Link } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
+import SignUp from './pages/SignUp';
+import VerifyEmail from './pages/VerifyEmail';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
+import CompanySetup from './pages/CompanySetup';
+import UpgradeGate from './pages/UpgradeGate';
 import Dashboard from './pages/Dashboard';
 import Expenses from './pages/Expenses';
 import Sales from './pages/Sales';
@@ -28,11 +34,22 @@ import { applyBrandPreset } from './theme/presets';
 export default function App() {
   const [user, setUser] = useState(null);
   const [companies, setCompanies] = useState([]);
+  const [company, setCompany] = useState(null);
+  const [license, setLicense] = useState(null);
   const [checked, setChecked] = useState(false);
 
-  function loadCompanyContext(company) {
-    if (company) applyBrandPreset(company.brandAccentColor);
+  function loadCompanyContext(companyRecord) {
+    setCompany(companyRecord);
+    if (companyRecord) applyBrandPreset(companyRecord.brandAccentColor);
     api.listMyCompanies().then((r) => setCompanies(r.companies)).catch(() => {});
+    // A brand-new self-serve company's license status is meaningless until setup is
+    // finished (it has no chart of accounts yet), so skip the fetch until then --
+    // otherwise this call can race completeSetup and briefly show the Upgrade gate.
+    if (companyRecord && companyRecord.setupCompleted) {
+      api.getLicense().then(setLicense).catch(() => setLicense(null));
+    } else {
+      setLicense(null);
+    }
   }
 
   useEffect(() => {
@@ -66,6 +83,8 @@ export default function App() {
     setAccessToken(null);
     setUser(null);
     setCompanies([]);
+    setCompany(null);
+    setLicense(null);
   }
 
   async function handleSwitchCompany(companyId) {
@@ -84,6 +103,10 @@ export default function App() {
   if (!user) {
     return (
       <Routes>
+        <Route path="/signup" element={<SignUp />} />
+        <Route path="/verify" element={<VerifyEmail onVerified={handleLogin} />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="*" element={<Login onLogin={handleLogin} />} />
       </Routes>
     );
@@ -91,6 +114,26 @@ export default function App() {
 
   const isAdmin = user.role === 'administrator' || user.role === 'super_administrator';
   const isSuperAdmin = user.role === 'super_administrator';
+
+  // First-run wizard (write-up: "...asking you to create your company and link you to
+  // it as an administrator") -- blocks the rest of the app until finished.
+  if (company && !company.setupCompleted) {
+    return (
+      <CompanySetup
+        onComplete={async () => {
+          const c = await api.getCompany();
+          loadCompanyContext(c);
+        }}
+      />
+    );
+  }
+
+  // Trial fully expired (past its 30-day grace period) -- blocks everything except
+  // signing out, mirroring middleware/auth.js's backend enforcement. Super Admins manage
+  // every company's license, so their own is never the blocker.
+  if (!isSuperAdmin && license && license.status === 'expired') {
+    return <UpgradeGate license={license} onSignOut={handleLogout} />;
+  }
 
   return (
     <div style={{ display: 'flex' }}>
@@ -104,10 +147,18 @@ export default function App() {
       />
       {/* Keying on companyId forces every page below to remount (and refetch) after a company switch. */}
       <div style={{ flex: 1 }} key={user.companyId}>
+        {!isSuperAdmin && license && license.status === 'grace_period' && (
+          <div style={{ background: 'linear-gradient(120deg, #993c1d, #d85a30)', color: '#fff', fontSize: 12.5, fontWeight: 600, padding: '8px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>⚠️ Your trial ended {Math.abs(license.daysLeft)} day{Math.abs(license.daysLeft) === 1 ? '' : 's'} ago — you're in a 30-day grace period. Upgrade to keep uninterrupted access.</span>
+            <Link to="/license" style={{ color: '#fff', textDecoration: 'underline', fontWeight: 700, whiteSpace: 'nowrap', marginLeft: 12 }}>View plans</Link>
+          </div>
+        )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 20px 0' }}>
           <NotificationBell />
         </div>
         <Routes>
+          <Route path="/verify" element={<VerifyEmail onVerified={handleLogin} />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/" element={<Dashboard />} />
           <Route path="/expenses" element={<Expenses />} />
           <Route path="/banking" element={<Banking />} />

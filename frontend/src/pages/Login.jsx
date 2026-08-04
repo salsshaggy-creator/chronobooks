@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { api, setAccessToken } from '../api/client';
 import BookStack from '../components/BookStack';
+import PasswordField from '../components/PasswordField';
 
 const TRUST_POINTS = [
   { icon: '🛡️', label: 'Bank-grade login security' },
@@ -142,13 +143,11 @@ export default function Login({ onLogin }) {
 
             <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--cb-text-primary)' }}>
               Password
-              <input
-                type="password"
+              <PasswordField
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter your password"
                 style={inputStyle}
-                required
               />
             </label>
 
@@ -157,7 +156,7 @@ export default function Login({ onLogin }) {
                 <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
                 Remember me
               </label>
-              <span style={{ color: 'var(--cb-primary-600)', fontWeight: 600, cursor: 'default' }}>Forgot password?</span>
+              <Link to="/forgot-password" style={{ color: 'var(--cb-primary-600)', fontWeight: 600, textDecoration: 'none' }}>Forgot password?</Link>
             </div>
 
             {error && <div style={{ color: 'var(--cb-danger)', fontSize: 13 }}>{error}</div>}
@@ -171,7 +170,11 @@ export default function Login({ onLogin }) {
             </div>
           </form>
 
-          <div style={{ fontSize: 11, color: 'var(--cb-text-secondary)', textAlign: 'center', marginTop: 30 }}>
+          <div style={{ fontSize: 12.5, textAlign: 'center', marginTop: 18 }}>
+            Don't have an account? <Link to="/signup" style={{ color: 'var(--cb-primary-600)', fontWeight: 600, textDecoration: 'none' }}>Sign up</Link>
+          </div>
+
+          <div style={{ fontSize: 11, color: 'var(--cb-text-secondary)', textAlign: 'center', marginTop: 16 }}>
             Protected by ChronoBooks security · © 2026 ChronoBooks Accounting
           </div>
         </div>

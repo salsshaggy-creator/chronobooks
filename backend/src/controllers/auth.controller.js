@@ -68,6 +68,11 @@ async function login(req, res) {
     return res.status(403).json({ error: 'This account has been locked. Contact your administrator.' });
   }
 
+  if (!user.email_verified) {
+    await recordLoginAttempt({ email, success: false, reason: 'Email not verified', userId: user.id, companyId: user.company_id, req });
+    return res.status(403).json({ error: 'Please verify your email before signing in. Check your inbox for the verification link.', code: 'EMAIL_NOT_VERIFIED' });
+  }
+
   await recordLoginAttempt({ email, success: true, reason: null, userId: user.id, companyId: user.company_id, req });
 
   const { accessToken, refreshToken } = signTokens(user, user.company_id);

@@ -36,7 +36,7 @@ async function createCompany(req, res) {
   await seedParameters(companyId);
 
   const branchId = crypto.randomUUID();
-  await db.query(`INSERT INTO branches (id, company_id, name, is_head_office) VALUES ($1,$2,'Head Office',1)`, [branchId, companyId]);
+  await db.query(`INSERT INTO branches (id, company_id, name, is_head_office) VALUES ($1,$2,'Head Office',true)`, [branchId, companyId]);
 
   const existingUser = await db.query(`SELECT id FROM users WHERE company_id = $1 AND email = $2`, [companyId, adminEmail]);
   if (existingUser.rows[0]) return res.status(409).json({ error: 'A user with that email already exists in this company.' });

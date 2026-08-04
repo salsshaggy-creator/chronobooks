@@ -77,11 +77,53 @@ async function getMyLicense(req, res) {
 
 async function listPricingTiers(req, res) {
   const result = await db.query(`SELECT * FROM pricing_tiers ORDER BY sort_order`, []);
-  res.json({ tiers: result.rows });
+  const tiers = result.rows.map((t) => ({
+    ...t,
+    modulesIncluded: (t.modules_included || '').split(',').map((s) => s.trim()).filter(Boolean),
+    userLimitNumeric: t.user_limit_numeric ?? null,
+  }));
+  res.json({ tiers });
 }
 async function listPricingAddons(req, res) {
   const result = await db.query(`SELECT * FROM pricing_addons ORDER BY sort_order`, []);
   res.json({ addons: result.rows });
+}
+
+/**
+ * Request Upgrade — the trial-expired (or just browsing) company picks a plan off the
+ * pricing table; there's no payment processor wired up, so this just records the request
+ * for a Super Administrator to review and activate via the license generator below,
+ * rather than charging anything automatically.
+ */
+async function requestUpgrade(req, res) {
+  const { companyId } = req.user;
+  const { tierId } = req.body;
+  if (!tierId) return res.status(400).json({ error: 'tierId is required.' });
+
+  const tierRes = await db.query(`SELECT * FROM pricing_tiers WHERE id = $1`, [tierId]);
+  const tier = tierRes.rows[0];
+  if (!tier) return res.status(404).json({ error: 'Pricing tier not found.' });
+
+  await db.query(
+    `UPDATE companies SET requested_plan_name = $1, plan_requested_at = $2 WHERE id = $3`,
+    [tier.plan_name, new Date().toISOString(), companyId]
+  );
+  res.json({ ok: true, planName: tier.plan_name });
+}
+
+/** Super Administrator: every company with an unactioned plan request, oldest first. */
+async function listUpgradeRequests(req, res) {
+  const result = await db.query(
+    `SELECT id, name, requested_plan_name, plan_requested_at, plan_name as current_plan_name
+     FROM companies WHERE requested_plan_name IS NOT NULL ORDER BY plan_requested_at ASC`,
+    []
+  );
+  res.json({
+    requests: result.rows.map((r) => ({
+      companyId: r.id, companyName: r.name, requestedPlanName: r.requested_plan_name,
+      requestedAt: r.plan_requested_at, currentPlanName: r.current_plan_name,
+    })),
+  });
 }
 
 /** Super Administrator can edit the platform's own pricing tiers/addons directly (the pencil-icon rows). */
@@ -158,6 +200,8 @@ async function generateLicense(req, res) {
     `license_type = $${i}`, `plan_name = $${i + 1}`, `user_limit = $${i + 2}`, `license_key = $${i + 3}`,
     `customer_ref = $${i + 4}`, `license_activated_at = $${i + 5}`, `license_expires_at = $${i + 6}`,
     `license_last_renewed_at = $${i + 7}`, `ai_assistant_allowance = $${i + 8}`,
+    // Issuing any license fulfils whatever plan the company had requested, if any.
+    `requested_plan_name = NULL`, `plan_requested_at = NULL`,
   ];
   const baseValues = [licenseType, planName, Number(userLimit), licenseKey, customerRef, today, expiresAt, lastRenewedAt, aiAssistantAllowance || 'none'];
 
@@ -191,5 +235,5 @@ async function deleteCompany(req, res) {
 
 module.exports = {
   getMyLicense, listPricingTiers, listPricingAddons, updatePricingTier, updatePricingAddon,
-  getCompanyLicense, generateLicense, deleteCompany,
+  getCompanyLicense, generateLicense, deleteCompany, requestUpgrade, listUpgradeRequests, seatUsage, licenseStatus,
 };

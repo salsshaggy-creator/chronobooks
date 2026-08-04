@@ -42,7 +42,7 @@ function toModuleShape(company) {
 async function seatUsage(companyId) {
   const res = await db.query(
     `SELECT COUNT(*) as cnt FROM users u JOIN roles r ON r.id = u.role_id
-     WHERE u.company_id = $1 AND u.is_active = 1 AND r.code != 'super_administrator'`,
+     WHERE u.company_id = $1 AND u.is_active = true AND r.code != 'super_administrator'`,
     [companyId]
   );
   return Number(res.rows[0].cnt) || 0;

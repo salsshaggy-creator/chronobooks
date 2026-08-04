@@ -54,7 +54,7 @@ async function createBankAccount(req, res) {
   const accountId = accountRes.rows[0].id;
 
   if (isDefault) {
-    await db.query(`UPDATE bank_accounts SET is_default = 0 WHERE company_id = $1`, [companyId]);
+    await db.query(`UPDATE bank_accounts SET is_default = false WHERE company_id = $1`, [companyId]);
   }
 
   const bankAccountId = crypto.randomUUID();

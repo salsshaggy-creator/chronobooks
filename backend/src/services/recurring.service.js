@@ -146,7 +146,7 @@ async function runDue(companyId, userId, asOfDate) {
   const { buildExpense } = require('../controllers/expense.controller');
 
   const res = await db.query(
-    `SELECT * FROM recurring_transactions WHERE company_id = $1 AND is_active = 1 AND next_run_date <= $2 ORDER BY next_run_date ASC`,
+    `SELECT * FROM recurring_transactions WHERE company_id = $1 AND is_active = true AND next_run_date <= $2 ORDER BY next_run_date ASC`,
     [companyId, asOfDate]
   );
 

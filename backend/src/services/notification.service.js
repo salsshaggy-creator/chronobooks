@@ -60,7 +60,7 @@ async function lowStockItems(companyId) {
 
   const res = await db.query(
     `SELECT id, name, sku, quantity_on_hand, reorder_level FROM inventory_items
-     WHERE company_id = $1 AND is_active = 1 AND reorder_level > 0 AND quantity_on_hand <= reorder_level
+     WHERE company_id = $1 AND is_active = true AND reorder_level > 0 AND quantity_on_hand <= reorder_level
      ORDER BY quantity_on_hand ASC`,
     [companyId]
   );
@@ -80,7 +80,7 @@ async function recurringDue(companyId) {
 
   const res = await db.query(
     `SELECT id, name, type, next_run_date FROM recurring_transactions
-     WHERE company_id = $1 AND is_active = 1 AND next_run_date <= $2
+     WHERE company_id = $1 AND is_active = true AND next_run_date <= $2
      ORDER BY next_run_date ASC`,
     [companyId, today()]
   );

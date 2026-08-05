@@ -36,6 +36,11 @@ export default function Sales() {
   const [receiptError, setReceiptError] = useState('');
   const [expandedId, setExpandedId] = useState(null);
 
+  const [newCustomerOpen, setNewCustomerOpen] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({ name: '', email: '', phone: '' });
+  const [newCustomerError, setNewCustomerError] = useState('');
+  const [newCustomerSaving, setNewCustomerSaving] = useState(false);
+
   function load() {
     api.listCustomers().then((r) => {
       setCustomers(r.customers);
@@ -95,6 +100,25 @@ export default function Sales() {
     }
   }
 
+  async function handleCreateCustomer(e) {
+    e.preventDefault();
+    setNewCustomerError('');
+    if (!newCustomer.name.trim()) { setNewCustomerError('Customer name is required.'); return; }
+    setNewCustomerSaving(true);
+    try {
+      const result = await api.createCustomer({ name: newCustomer.name.trim(), email: newCustomer.email || undefined, phone: newCustomer.phone || undefined });
+      const r = await api.listCustomers();
+      setCustomers(r.customers);
+      setForm((f) => ({ ...f, customerId: result.id }));
+      setNewCustomer({ name: '', email: '', phone: '' });
+      setNewCustomerOpen(false);
+    } catch (err) {
+      setNewCustomerError(err.message);
+    } finally {
+      setNewCustomerSaving(false);
+    }
+  }
+
   async function handleReceipt(invoiceId) {
     setReceiptError('');
     setNotice('');
@@ -128,10 +152,46 @@ export default function Sales() {
 
         <label style={labelStyle}>
           Customer
-          <select value={form.customerId} onChange={(e) => setForm({ ...form, customerId: e.target.value })} style={inputStyle} required>
+          <select
+            value={form.customerId}
+            onChange={(e) => {
+              if (e.target.value === '__new__') { setNewCustomerOpen(true); return; }
+              setForm({ ...form, customerId: e.target.value });
+            }}
+            style={inputStyle}
+            required
+          >
             {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <option value="__new__">+ Add new customer…</option>
           </select>
         </label>
+
+        {newCustomerOpen && (
+          <div style={{ border: '1px solid var(--cb-border)', borderRadius: 8, padding: 12, background: 'var(--cb-bg)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600 }}>New customer</div>
+            <label style={labelStyle}>
+              Name
+              <input value={newCustomer.name} onChange={(e) => setNewCustomer({ ...newCustomer, name: e.target.value })} placeholder="Customer name" style={inputStyle} required />
+            </label>
+            <label style={labelStyle}>
+              Email (optional)
+              <input type="email" value={newCustomer.email} onChange={(e) => setNewCustomer({ ...newCustomer, email: e.target.value })} placeholder="customer@email.com" style={inputStyle} />
+            </label>
+            <label style={labelStyle}>
+              Phone (optional)
+              <input value={newCustomer.phone} onChange={(e) => setNewCustomer({ ...newCustomer, phone: e.target.value })} placeholder="Phone number" style={inputStyle} />
+            </label>
+            {newCustomerError && <div style={{ color: 'var(--cb-danger)', fontSize: 12.5 }}>{newCustomerError}</div>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" onClick={handleCreateCustomer} disabled={newCustomerSaving} style={{ ...buttonStyle, marginTop: 0, flex: 1 }}>
+                {newCustomerSaving ? 'Saving…' : 'Save customer'}
+              </button>
+              <button type="button" onClick={() => { setNewCustomerOpen(false); setNewCustomerError(''); }} style={{ ...ghostButtonStyle, flex: 1 }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         <label style={labelStyle}>
           Invoice date

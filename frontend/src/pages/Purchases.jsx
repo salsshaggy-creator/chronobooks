@@ -37,6 +37,11 @@ export default function Purchases() {
   const [paymentError, setPaymentError] = useState('');
   const [expandedId, setExpandedId] = useState(null);
 
+  const [newSupplierOpen, setNewSupplierOpen] = useState(false);
+  const [newSupplier, setNewSupplier] = useState({ name: '', email: '', phone: '' });
+  const [newSupplierError, setNewSupplierError] = useState('');
+  const [newSupplierSaving, setNewSupplierSaving] = useState(false);
+
   const isStockReceipt = form.expenseCategory === 'Inventory';
 
   function load() {
@@ -98,6 +103,25 @@ export default function Purchases() {
     }
   }
 
+  async function handleCreateSupplier(e) {
+    e.preventDefault();
+    setNewSupplierError('');
+    if (!newSupplier.name.trim()) { setNewSupplierError('Supplier name is required.'); return; }
+    setNewSupplierSaving(true);
+    try {
+      const result = await api.createSupplier({ name: newSupplier.name.trim(), email: newSupplier.email || undefined, phone: newSupplier.phone || undefined });
+      const r = await api.listSuppliers();
+      setSuppliers(r.suppliers);
+      setForm((f) => ({ ...f, supplierId: result.id }));
+      setNewSupplier({ name: '', email: '', phone: '' });
+      setNewSupplierOpen(false);
+    } catch (err) {
+      setNewSupplierError(err.message);
+    } finally {
+      setNewSupplierSaving(false);
+    }
+  }
+
   async function handlePayment(billId) {
     setPaymentError('');
     try {
@@ -129,10 +153,46 @@ export default function Purchases() {
 
         <label style={labelStyle}>
           Supplier
-          <select value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value })} style={inputStyle} required>
+          <select
+            value={form.supplierId}
+            onChange={(e) => {
+              if (e.target.value === '__new__') { setNewSupplierOpen(true); return; }
+              setForm({ ...form, supplierId: e.target.value });
+            }}
+            style={inputStyle}
+            required
+          >
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            <option value="__new__">+ Add new supplier…</option>
           </select>
         </label>
+
+        {newSupplierOpen && (
+          <div style={{ border: '1px solid var(--cb-border)', borderRadius: 8, padding: 12, background: 'var(--cb-bg)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600 }}>New supplier</div>
+            <label style={labelStyle}>
+              Name
+              <input value={newSupplier.name} onChange={(e) => setNewSupplier({ ...newSupplier, name: e.target.value })} placeholder="Supplier name" style={inputStyle} required />
+            </label>
+            <label style={labelStyle}>
+              Email (optional)
+              <input type="email" value={newSupplier.email} onChange={(e) => setNewSupplier({ ...newSupplier, email: e.target.value })} placeholder="supplier@email.com" style={inputStyle} />
+            </label>
+            <label style={labelStyle}>
+              Phone (optional)
+              <input value={newSupplier.phone} onChange={(e) => setNewSupplier({ ...newSupplier, phone: e.target.value })} placeholder="Phone number" style={inputStyle} />
+            </label>
+            {newSupplierError && <div style={{ color: 'var(--cb-danger)', fontSize: 12.5 }}>{newSupplierError}</div>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" onClick={handleCreateSupplier} disabled={newSupplierSaving} style={{ ...buttonStyle, marginTop: 0, flex: 1 }}>
+                {newSupplierSaving ? 'Saving…' : 'Save supplier'}
+              </button>
+              <button type="button" onClick={() => { setNewSupplierOpen(false); setNewSupplierError(''); }} style={{ ...ghostButtonStyle, flex: 1 }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         <label style={labelStyle}>
           Bill date

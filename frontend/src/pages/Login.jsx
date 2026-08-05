@@ -164,15 +164,14 @@ export default function Login({ onLogin }) {
             <button type="submit" disabled={loading} style={buttonStyle}>
               {loading ? 'Signing in…' : 'Sign in'}
             </button>
-
-            </form>
+          </form>
 
           <div style={{ fontSize: 12.5, textAlign: 'center', marginTop: 18 }}>
             Don't have an account? <Link to="/signup" style={{ color: 'var(--cb-primary-600)', fontWeight: 600, textDecoration: 'none' }}>Sign up</Link>
           </div>
 
           <div style={{ fontSize: 11, color: 'var(--cb-text-secondary)', textAlign: 'center', marginTop: 16 }}>
-            Protected by ChronoBooks security · © 2026 ChronoBooks Accounting
+            Protected by ChronoBooks security · © 2026 ChronoBooks Accounting · <Link to="/faq" style={{ color: 'var(--cb-text-secondary)', textDecoration: 'underline' }}>FAQ</Link>
           </div>
         </div>
       </div>

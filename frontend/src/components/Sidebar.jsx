@@ -50,6 +50,10 @@ const NAV_GROUPS = [
       { to: '/settings', label: 'Settings', icon: '⚙' },
     ],
   },
+  {
+    header: 'SUPPORT',
+    items: [{ to: '/help', label: 'Help & FAQ', icon: '❓' }],
+  },
 ];
 
 export default function Sidebar({ companyName, userName, isSuperAdmin, companies, onSignOut, onSwitchCompany }) {

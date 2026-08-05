@@ -8,6 +8,8 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import CompanySetup from './pages/CompanySetup';
 import UpgradeGate from './pages/UpgradeGate';
+import FAQ from './pages/FAQ';
+import Help from './pages/Help';
 import Dashboard from './pages/Dashboard';
 import Expenses from './pages/Expenses';
 import Sales from './pages/Sales';
@@ -107,6 +109,7 @@ export default function App() {
         <Route path="/verify" element={<VerifyEmail onVerified={handleLogin} />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/faq" element={<FAQ />} />
         <Route path="*" element={<Login onLogin={handleLogin} />} />
       </Routes>
     );
@@ -176,6 +179,7 @@ export default function App() {
           <Route path="/approvals" element={<Approvals />} />
           <Route path="/settings" element={<Settings isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} />} />
           <Route path="/license" element={<License isSuperAdmin={isSuperAdmin} />} />
+          <Route path="/help" element={<Help />} />
           {isSuperAdmin && <Route path="/system-admin" element={<SystemAdmin onSwitchCompany={handleSwitchCompany} />} />}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -146,6 +146,10 @@ export default function SignUp() {
               <div style={{ fontSize: 12.5, textAlign: 'center', marginTop: 18 }}>
                 Already have an account? <Link to="/login" style={{ color: 'var(--cb-primary-600)', fontWeight: 600, textDecoration: 'none' }}>Sign in</Link>
               </div>
+
+              <div style={{ fontSize: 11.5, textAlign: 'center', marginTop: 10 }}>
+                <Link to="/faq" style={{ color: 'var(--cb-text-secondary)', textDecoration: 'underline' }}>Questions about the trial or pricing? See the FAQ</Link>
+              </div>
             </>
           )}
         </div>

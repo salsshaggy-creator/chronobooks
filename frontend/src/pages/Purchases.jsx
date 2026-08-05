@@ -155,17 +155,23 @@ export default function Purchases() {
           Supplier
           <select
             value={form.supplierId}
-            onChange={(e) => {
-              if (e.target.value === '__new__') { setNewSupplierOpen(true); return; }
-              setForm({ ...form, supplierId: e.target.value });
-            }}
+            onChange={(e) => setForm({ ...form, supplierId: e.target.value })}
             style={inputStyle}
-            required
+            required={suppliers.length > 0}
+            disabled={suppliers.length === 0}
           >
+            {suppliers.length === 0 && <option value="">No suppliers yet — add one below</option>}
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            <option value="__new__">+ Add new supplier…</option>
           </select>
         </label>
+
+        <button
+          type="button"
+          onClick={() => setNewSupplierOpen(true)}
+          style={{ ...ghostButtonStyle, alignSelf: 'flex-start' }}
+        >
+          + Add new supplier
+        </button>
 
         {newSupplierOpen && (
           <div style={{ border: '1px solid var(--cb-border)', borderRadius: 8, padding: 12, background: 'var(--cb-bg)', display: 'flex', flexDirection: 'column', gap: 8 }}>

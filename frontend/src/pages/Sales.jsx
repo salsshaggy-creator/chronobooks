@@ -154,17 +154,23 @@ export default function Sales() {
           Customer
           <select
             value={form.customerId}
-            onChange={(e) => {
-              if (e.target.value === '__new__') { setNewCustomerOpen(true); return; }
-              setForm({ ...form, customerId: e.target.value });
-            }}
+            onChange={(e) => setForm({ ...form, customerId: e.target.value })}
             style={inputStyle}
-            required
+            required={customers.length > 0}
+            disabled={customers.length === 0}
           >
+            {customers.length === 0 && <option value="">No customers yet — add one below</option>}
             {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            <option value="__new__">+ Add new customer…</option>
           </select>
         </label>
+
+        <button
+          type="button"
+          onClick={() => setNewCustomerOpen(true)}
+          style={{ ...ghostButtonStyle, alignSelf: 'flex-start' }}
+        >
+          + Add new customer
+        </button>
 
         {newCustomerOpen && (
           <div style={{ border: '1px solid var(--cb-border)', borderRadius: 8, padding: 12, background: 'var(--cb-bg)', display: 'flex', flexDirection: 'column', gap: 8 }}>

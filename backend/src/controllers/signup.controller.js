@@ -21,8 +21,15 @@ function refreshCookieOptions() {
 function signTokens(user, companyId) {
   const payload = { sub: user.id, companyId, role: user.role_code || 'administrator', email: user.email };
   const accessToken = jwt.sign(payload, ACCESS_SECRET, { expiresIn: '15m' });
-  const refreshToken = jwt.sign({ sub: user.id }, REFRESH_SECRET, { expiresIn: '30d' });
+  // jti keeps every refresh token unique (see auth.controller.js's signTokens for why).
+  const refreshToken = jwt.sign({ sub: user.id, jti: crypto.randomUUID() }, REFRESH_SECRET, { expiresIn: '30d' });
   return { accessToken, refreshToken };
+}
+
+// Refresh tokens are long JWTs, not user-chosen passwords -- see auth.controller.js's
+// hashToken for why this uses SHA-256 instead of bcrypt (which truncates at 72 bytes).
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
 }
 
 function addDays(date, days) {
@@ -32,19 +39,21 @@ function addDays(date, days) {
 }
 
 /**
- * Public Sign Up (write-up: "create an account... verification email... setup page").
+ * Public Sign Up (write-up: "...just be your email address and password... then you
+ * should be allowed to go in... then you are required to create your company and the
+ * rest"). Just email + password up front; the administrator's name is collected in
+ * completeSetup() alongside the company details, right after email verification.
  * Provisions a placeholder company + its first (Administrator) user immediately, since
- * users.company_id is NOT NULL -- the "create your company" step the person experiences
- * happens in completeSetup() right after email verification, which really finishes/
- * renames this placeholder rather than inserting a brand-new row later. Self-serve
- * companies are capped at 2 users (user_limit, enforced in user.controller.createUser)
- * and can never create a second company -- there's no self-serve endpoint for that, only
- * a Super Administrator can provision additional companies.
+ * users.company_id is NOT NULL -- completeSetup() finishes/renames this placeholder
+ * rather than inserting a brand-new row later. Self-serve companies are capped at 2 users
+ * (user_limit, enforced in user.controller.createUser) and can never create a second
+ * company -- there's no self-serve endpoint for that, only a Super Administrator can
+ * provision additional companies.
  */
 async function register(req, res) {
-  const { fullName, email, password } = req.body;
-  if (!fullName || !email || !password) {
-    return res.status(400).json({ error: 'Full name, email, and password are required.' });
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required.' });
   }
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
 
@@ -54,10 +63,12 @@ async function register(req, res) {
   const companyId = crypto.randomUUID();
   const today = new Date().toISOString().slice(0, 10);
   const trialExpires = addDays(today, TRIAL_DAYS);
+  // Placeholder name -- completeSetup() renames this to the real company name right after
+  // verification, so what's here never actually reaches the user.
   await db.query(
     `INSERT INTO companies (id, name, currency, brand_accent_color, self_serve, setup_completed, plan_name, user_limit, license_activated_at, license_expires_at)
      VALUES ($1,$2,'GHS','indigo',true,false,$3,$4,$5,$6)`,
-    [companyId, `${fullName.trim()}'s Company`, 'Free Trial (30 days)', SELF_SERVE_USER_LIMIT, today, trialExpires]
+    [companyId, 'New Company', 'Free Trial (30 days)', SELF_SERVE_USER_LIMIT, today, trialExpires]
   );
 
   const adminRole = await db.query(`SELECT id FROM roles WHERE code = 'administrator'`, []);
@@ -65,14 +76,13 @@ async function register(req, res) {
   const passwordHash = await bcrypt.hash(password, 10);
   const verificationToken = crypto.randomBytes(24).toString('hex');
   const verificationExpires = new Date(Date.now() + VERIFICATION_TOKEN_HOURS * 60 * 60 * 1000).toISOString();
-  const nameParts = fullName.trim().split(/\s+/);
-  const firstName = nameParts[0];
-  const lastName = nameParts.slice(1).join(' ') || nameParts[0];
+  // Placeholder name -- completeSetup() sets the real one once the person provides it.
+  const placeholderName = email.split('@')[0];
 
   await db.query(
     `INSERT INTO users (id, company_id, email, password_hash, full_name, first_name, last_name, role_id, email_verified, verification_token, verification_token_expires_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false,$9,$10)`,
-    [userId, companyId, email, passwordHash, fullName.trim(), firstName, lastName, adminRole.rows[0].id, verificationToken, verificationExpires]
+    [userId, companyId, email, passwordHash, placeholderName, placeholderName, placeholderName, adminRole.rows[0].id, verificationToken, verificationExpires]
   );
   await db.query(`INSERT INTO user_companies (user_id, company_id) VALUES ($1,$2)`, [userId, companyId]);
 
@@ -109,8 +119,7 @@ async function verifyEmail(req, res) {
   await db.query(`UPDATE users SET email_verified = true, verification_token = NULL, verification_token_expires_at = NULL WHERE id = $1`, [user.id]);
 
   const { accessToken, refreshToken } = signTokens(user, user.company_id);
-  const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
-  await db.query(`UPDATE users SET refresh_token_hash = $1 WHERE id = $2`, [refreshTokenHash, user.id]);
+  await db.query(`UPDATE users SET refresh_token_hash = $1 WHERE id = $2`, [hashToken(refreshToken), user.id]);
   res.cookie('chronobooks_refresh', refreshToken, { ...refreshCookieOptions(), maxAge: 30 * 24 * 60 * 60 * 1000 });
 
   res.json({
@@ -132,7 +141,8 @@ async function verifyEmail(req, res) {
  */
 async function completeSetup(req, res) {
   const { companyId, sub: userId } = req.user;
-  const { companyName, currency, country, industry, companyType } = req.body;
+  const { fullName, companyName, currency, country, industry, companyType } = req.body;
+  if (!fullName || !fullName.trim()) return res.status(400).json({ error: 'Your name is required.' });
   if (!companyName) return res.status(400).json({ error: 'Company name is required.' });
 
   const existing = await db.query(`SELECT * FROM companies WHERE id = $1`, [companyId]);
@@ -143,6 +153,15 @@ async function completeSetup(req, res) {
   await db.query(
     `UPDATE companies SET name = $1, currency = $2, country = $3, industry = $4, company_type = $5, setup_completed = true WHERE id = $6`,
     [companyName, currency || company.currency, country || null, industry || null, companyType || null, companyId]
+  );
+
+  const trimmedName = fullName.trim();
+  const nameParts = trimmedName.split(/\s+/);
+  const firstName = nameParts[0];
+  const lastName = nameParts.slice(1).join(' ') || nameParts[0];
+  await db.query(
+    `UPDATE users SET full_name = $1, first_name = $2, last_name = $3 WHERE id = $4`,
+    [trimmedName, firstName, lastName, userId]
   );
 
   await seedChartOfAccounts(companyId);

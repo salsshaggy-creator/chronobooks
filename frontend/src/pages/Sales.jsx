@@ -66,6 +66,11 @@ export default function Sales() {
     setForm({ ...form, lines });
   }
 
+  function removeLine(index) {
+    if (form.lines.length <= 1) return; // always keep at least one line
+    setForm({ ...form, lines: form.lines.filter((_, i) => i !== index) });
+  }
+
   function pickItemForLine(index, itemId) {
     const item = items.find((i) => i.id === itemId);
     const lines = form.lines.map((l, i) => (i === index
@@ -251,10 +256,19 @@ export default function Sales() {
                 {items.map((it) => <option key={it.id} value={it.id}>{it.name}{it.sku ? ` (${it.sku})` : ''} — {Number(it.quantity_on_hand).toLocaleString()} on hand</option>)}
               </select>
             )}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 50px 70px', gap: 6 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 50px 70px 24px', gap: 6, alignItems: 'center' }}>
               <input placeholder="Description" value={line.description} onChange={(e) => updateLine(i, 'description', e.target.value)} style={inputStyle} required disabled={!!line.itemId} />
               <input type="number" min="1" placeholder="Qty" value={line.quantity} onChange={(e) => updateLine(i, 'quantity', e.target.value)} style={inputStyle} />
               <input type="number" min="0" step="0.01" placeholder="Price" value={line.unitPrice} onChange={(e) => updateLine(i, 'unitPrice', e.target.value)} style={inputStyle} required />
+              <button
+                type="button"
+                onClick={() => removeLine(i)}
+                disabled={form.lines.length <= 1}
+                title="Remove line"
+                style={{ border: 'none', background: 'transparent', color: form.lines.length <= 1 ? 'var(--cb-border)' : 'var(--cb-danger)', fontSize: 16, fontWeight: 700, cursor: form.lines.length <= 1 ? 'default' : 'pointer', padding: 0, lineHeight: 1 }}
+              >
+                ×
+              </button>
             </div>
           </div>
         ))}

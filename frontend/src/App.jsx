@@ -124,6 +124,11 @@ export default function App() {
     return (
       <CompanySetup
         onComplete={async () => {
+          // completeSetup() also sets the user's real name (signup only asked for email +
+          // password) -- refresh both so the sidebar shows it right away instead of the
+          // placeholder used while the account was unverified.
+          const { user: refreshedUser } = await api.me();
+          setUser((u) => ({ ...u, ...refreshedUser }));
           const c = await api.getCompany();
           loadCompanyContext(c);
         }}

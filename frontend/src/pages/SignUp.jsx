@@ -11,7 +11,6 @@ const TRUST_POINTS = [
 ];
 
 export default function SignUp() {
-  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -28,7 +27,7 @@ export default function SignUp() {
     }
     setLoading(true);
     try {
-      const r = await api.register(fullName, email, password);
+      const r = await api.register(email, password);
       setResult(r);
     } catch (err) {
       setError(err.message);
@@ -116,13 +115,11 @@ export default function SignUp() {
               <div style={{ fontSize: 21, fontWeight: 700, marginBottom: 4 }}>Create your account</div>
               <div style={{ fontSize: 13, color: 'var(--cb-text-secondary)', marginBottom: 26 }}>
                 Free for 30 days. You'll be the Administrator — up to 2 users on the trial.
+                Just your email and a password to get started; you'll add your name and
+                company details right after.
               </div>
 
               <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <label style={labelStyle}>
-                  Full name
-                  <input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Your full name" style={inputStyle} required />
-                </label>
                 <label style={labelStyle}>
                   Email
                   <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" style={inputStyle} required />

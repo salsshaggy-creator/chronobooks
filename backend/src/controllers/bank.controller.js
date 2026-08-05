@@ -88,6 +88,24 @@ async function createBankAccount(req, res) {
   res.status(201).json({ id: bankAccountId, accountId, code });
 }
 
+/** PUT /bank-accounts/:id — rename a bank/mobile-money account. Keeps the linked Chart of
+ * Accounts entry's name in sync so the ledger and reports show the same label. */
+async function updateBankAccount(req, res) {
+  const { companyId } = req.user;
+  const { id } = req.params;
+  const { name } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Account name is required.' });
+
+  const bank = await getBankAccountRow(companyId, id);
+  if (!bank) return res.status(404).json({ error: 'Bank account not found.' });
+
+  const trimmed = name.trim();
+  await db.query(`UPDATE bank_accounts SET name = $1 WHERE id = $2 AND company_id = $3`, [trimmed, id, companyId]);
+  await db.query(`UPDATE accounts SET name = $1 WHERE id = $2 AND company_id = $3`, [trimmed, bank.account_id, companyId]);
+
+  res.json({ ok: true });
+}
+
 async function getCashAccountId(companyId) {
   const res = await db.query(`SELECT id FROM accounts WHERE company_id = $1 AND group_name = 'Cash' LIMIT 1`, [companyId]);
   return res.rows[0]?.id;
@@ -199,4 +217,4 @@ async function listTransactions(req, res) {
   res.json({ transactions: result.rows });
 }
 
-module.exports = { listBankAccounts, createBankAccount, deposit, withdraw, transfer, charge, interest, listTransactions };
+module.exports = { listBankAccounts, createBankAccount, updateBankAccount, deposit, withdraw, transfer, charge, interest, listTransactions };

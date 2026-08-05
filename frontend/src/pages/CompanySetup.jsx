@@ -12,6 +12,7 @@ const COMPANY_TYPES = ['Sole Proprietor', 'Partnership', 'Limited Liability Comp
  * accounts and Head Office branch and unlocks the rest of the app.
  */
 export default function CompanySetup({ onComplete }) {
+  const [fullName, setFullName] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [currency, setCurrency] = useState('GHS');
   const [country, setCountry] = useState('Ghana');
@@ -25,7 +26,7 @@ export default function CompanySetup({ onComplete }) {
     setError('');
     setLoading(true);
     try {
-      await api.completeSetup({ companyName, currency, country, industry, companyType });
+      await api.completeSetup({ fullName, companyName, currency, country, industry, companyType });
       await onComplete();
     } catch (err) {
       setError(err.message);
@@ -45,6 +46,11 @@ export default function CompanySetup({ onComplete }) {
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <label style={labelStyle}>
+            Your name
+            <input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="e.g. Kofi Solomon" style={inputStyle} required />
+          </label>
+
           <label style={labelStyle}>
             Company name
             <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="e.g. Solomon Trading Ltd" style={inputStyle} required />

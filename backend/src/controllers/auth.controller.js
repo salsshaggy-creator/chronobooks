@@ -7,6 +7,24 @@ const { validatePasswordAgainstPolicy } = require('../utils/passwordPolicy');
 
 const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret-change-me';
 
+// Refresh tokens are stored hashed (so a leaked database dump can't be replayed as a live
+// session) but they're long JWTs, not user-chosen passwords -- bcrypt silently truncates
+// its input at 72 bytes, and two JWTs for the same user share an identical header + `sub`
+// prefix well past that point, so bcrypt.compare() would treat a rotated-out token as
+// still valid. A refresh token already has 128+ bits of entropy from its signature, so it
+// doesn't need bcrypt's slow, salted hashing to resist brute force -- a plain fixed-length
+// SHA-256 digest compared in constant time is the standard approach for high-entropy
+// tokens like this.
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+function tokenMatches(token, storedHash) {
+  if (!storedHash) return false;
+  const a = Buffer.from(hashToken(token));
+  const b = Buffer.from(storedHash);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 /**
  * In local dev, frontend and backend share a scheme+port-adjacent origin, so a plain
  * `sameSite: 'lax'` cookie works fine. In production, frontend and backend are deployed
@@ -26,7 +44,10 @@ function refreshCookieOptions() {
 function signTokens(user, companyId) {
   const payload = { sub: user.id, companyId, role: user.role_code, email: user.email };
   const accessToken = jwt.sign(payload, ACCESS_SECRET, { expiresIn: '15m' });
-  const refreshToken = jwt.sign({ sub: user.id }, REFRESH_SECRET, { expiresIn: '30d' });
+  // jti makes every refresh token unique even if issued within the same second as the
+  // last one (JWTs are otherwise deterministic given identical payload+secret+iat), so
+  // rotating out the previous refresh token on every use actually invalidates it.
+  const refreshToken = jwt.sign({ sub: user.id, jti: crypto.randomUUID() }, REFRESH_SECRET, { expiresIn: '30d' });
   return { accessToken, refreshToken };
 }
 
@@ -76,8 +97,69 @@ async function login(req, res) {
   await recordLoginAttempt({ email, success: true, reason: null, userId: user.id, companyId: user.company_id, req });
 
   const { accessToken, refreshToken } = signTokens(user, user.company_id);
-  const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
-  await db.query(`UPDATE users SET refresh_token_hash = $1 WHERE id = $2`, [refreshTokenHash, user.id]);
+  await db.query(`UPDATE users SET refresh_token_hash = $1 WHERE id = $2`, [hashToken(refreshToken), user.id]);
+
+  res.cookie('chronobooks_refresh', refreshToken, {
+    ...refreshCookieOptions(),
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+  });
+
+  res.json({
+    accessToken,
+    user: {
+      id: user.id,
+      fullName: user.full_name,
+      email: user.email,
+      role: user.role_code,
+      roleName: user.role_name,
+      companyId: user.company_id,
+      companyName: user.company_name,
+    },
+  });
+}
+
+/**
+ * Silent session refresh — the access token is deliberately short-lived (15 minutes), but
+ * a user actively working shouldn't be kicked out to the login screen every 15 minutes.
+ * The frontend calls this automatically in the background whenever an API call comes back
+ * expired; as long as the httpOnly refresh cookie set at login is still valid (30 days) and
+ * hasn't been revoked (logout, password change), this hands back a fresh access token
+ * without the user noticing. The refresh token itself is rotated on every use so a stolen
+ * one only works once.
+ */
+async function refresh(req, res) {
+  const token = req.cookies?.chronobooks_refresh;
+  if (!token) return res.status(401).json({ error: 'No active session.' });
+
+  let payload;
+  try {
+    payload = jwt.verify(token, REFRESH_SECRET);
+  } catch (err) {
+    res.clearCookie('chronobooks_refresh', refreshCookieOptions());
+    return res.status(401).json({ error: 'Session expired. Please sign in again.' });
+  }
+
+  const result = await db.query(
+    `SELECT u.*, r.code as role_code, r.name as role_name, c.name as company_name
+     FROM users u JOIN roles r ON r.id = u.role_id JOIN companies c ON c.id = u.company_id
+     WHERE u.id = $1 LIMIT 1`,
+    [payload.sub]
+  );
+  const user = result.rows[0];
+  if (!user || !user.refresh_token_hash) {
+    res.clearCookie('chronobooks_refresh', refreshCookieOptions());
+    return res.status(401).json({ error: 'Session expired. Please sign in again.' });
+  }
+
+  if (!tokenMatches(token, user.refresh_token_hash) || !user.is_active) {
+    res.clearCookie('chronobooks_refresh', refreshCookieOptions());
+    return res.status(401).json({ error: 'Session expired. Please sign in again.' });
+  }
+
+  // req.user.companyId isn't available here (no access token on this request) -- reuse
+  // whatever company the last-issued refresh token's user record currently belongs to.
+  const { accessToken, refreshToken } = signTokens(user, user.company_id);
+  await db.query(`UPDATE users SET refresh_token_hash = $1 WHERE id = $2`, [hashToken(refreshToken), user.id]);
 
   res.cookie('chronobooks_refresh', refreshToken, {
     ...refreshCookieOptions(),
@@ -210,4 +292,4 @@ async function logout(req, res) {
   res.json({ ok: true });
 }
 
-module.exports = { login, me, logout, listMyCompanies, switchCompany, changePassword };
+module.exports = { login, me, logout, listMyCompanies, switchCompany, changePassword, refresh };

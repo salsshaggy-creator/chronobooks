@@ -58,6 +58,7 @@ const RECURRING_MANAGE_ROLES = ['administrator', 'accountant', 'finance_manager'
 const router = express.Router();
 
 router.post('/auth/login', asyncHandler(authController.login));
+router.post('/auth/refresh', asyncHandler(authController.refresh));
 router.get('/auth/me', requireAuth, asyncHandler(authController.me));
 router.post('/auth/logout', requireAuth, asyncHandler(authController.logout));
 router.get('/auth/companies', requireAuth, asyncHandler(authController.listMyCompanies));
@@ -131,6 +132,7 @@ router.delete('/system/companies/:companyId', requireAuth, requireRole('super_ad
 
 router.get('/bank-accounts', requireAuth, asyncHandler(bankController.listBankAccounts));
 router.post('/bank-accounts', requireAuth, asyncHandler(bankController.createBankAccount));
+router.put('/bank-accounts/:id', requireAuth, asyncHandler(bankController.updateBankAccount));
 router.post('/bank-accounts/deposit', requireAuth, asyncHandler(bankController.deposit));
 router.post('/bank-accounts/withdraw', requireAuth, asyncHandler(bankController.withdraw));
 router.post('/bank-accounts/transfer', requireAuth, asyncHandler(bankController.transfer));

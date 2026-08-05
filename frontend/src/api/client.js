@@ -13,7 +13,32 @@ export function loadAccessToken() {
   return accessToken;
 }
 
-async function request(path, options = {}) {
+// The access token is deliberately short-lived (15 min). Rather than kick an active user
+// back to the login screen every time it expires, a 401 triggers one silent call to
+// /auth/refresh (which reads the 30-day httpOnly cookie set at login) and, if that
+// succeeds, the original request is retried once with the fresh token. Concurrent
+// requests that all hit a 401 around the same time share a single in-flight refresh
+// instead of each firing their own.
+let refreshPromise = null;
+
+async function performRefresh() {
+  if (!refreshPromise) {
+    refreshPromise = fetch(`${BASE_URL}/auth/refresh`, { method: 'POST', credentials: 'include' })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const body = await res.json().catch(() => null);
+        if (body?.accessToken) setAccessToken(body.accessToken);
+        return body;
+      })
+      .catch(() => null)
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
+}
+
+async function request(path, options = {}, isRetry = false) {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
     headers: {
@@ -23,6 +48,11 @@ async function request(path, options = {}) {
     },
     credentials: 'include',
   });
+
+  if (res.status === 401 && !isRetry && path !== '/auth/refresh' && path !== '/auth/login') {
+    const refreshed = await performRefresh();
+    if (refreshed) return request(path, options, true);
+  }
 
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -77,7 +107,7 @@ export const api = {
   listMyCompanies: () => request('/auth/companies'),
   switchCompany: (companyId) => request('/auth/switch-company', { method: 'POST', body: JSON.stringify({ companyId }) }),
   changePassword: (currentPassword, newPassword) => request('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
-  register: (fullName, email, password) => request('/auth/register', { method: 'POST', body: JSON.stringify({ fullName, email, password }) }),
+  register: (email, password) => request('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) }),
   verifyEmail: (token) => request('/auth/verify-email', { method: 'POST', body: JSON.stringify({ token }) }),
   completeSetup: (payload) => request('/auth/complete-setup', { method: 'POST', body: JSON.stringify(payload) }),
   requestPasswordReset: (email) => request('/auth/request-password-reset', { method: 'POST', body: JSON.stringify({ email }) }),
@@ -104,6 +134,7 @@ export const api = {
   listUsers: () => request('/users'),
   listBankAccounts: () => request('/bank-accounts'),
   createBankAccount: (payload) => request('/bank-accounts', { method: 'POST', body: JSON.stringify(payload) }),
+  updateBankAccount: (id, payload) => request(`/bank-accounts/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   bankDeposit: (payload) => request('/bank-accounts/deposit', { method: 'POST', body: JSON.stringify(payload) }),
   bankWithdraw: (payload) => request('/bank-accounts/withdraw', { method: 'POST', body: JSON.stringify(payload) }),
   bankTransfer: (payload) => request('/bank-accounts/transfer', { method: 'POST', body: JSON.stringify(payload) }),

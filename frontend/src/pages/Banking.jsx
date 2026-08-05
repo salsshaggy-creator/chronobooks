@@ -24,6 +24,10 @@ export default function Banking() {
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [newAccount, setNewAccount] = useState(emptyAccount);
 
+  const [editingAccountId, setEditingAccountId] = useState(null);
+  const [editingName, setEditingName] = useState('');
+  const [renameError, setRenameError] = useState('');
+
   const [txnType, setTxnType] = useState('deposit');
   const [form, setForm] = useState({ bankAccountId: '', toBankAccountId: '', amount: '', date: today(), reference: '', description: '' });
 
@@ -36,6 +40,18 @@ export default function Banking() {
   }
 
   useEffect(load, []);
+
+  async function handleRename(id) {
+    setRenameError('');
+    if (!editingName.trim()) { setRenameError('Account name is required.'); return; }
+    try {
+      await api.updateBankAccount(id, { name: editingName.trim() });
+      setEditingAccountId(null);
+      load();
+    } catch (err) {
+      setRenameError(err.message);
+    }
+  }
 
   async function handleAddAccount(e) {
     e.preventDefault();
@@ -80,12 +96,39 @@ export default function Banking() {
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         {accounts.map((a) => (
           <div key={a.id} style={{ background: 'var(--cb-surface)', border: a.isDefault ? '1px solid var(--cb-primary-400)' : '1px solid var(--cb-border)', borderRadius: 'var(--cb-radius)', padding: '14px 18px', minWidth: 210 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div style={{ fontSize: 13, color: 'var(--cb-text-secondary)' }}>{a.name}</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
+              {editingAccountId === a.id ? (
+                <div style={{ display: 'flex', gap: 4, flex: 1 }}>
+                  <input
+                    value={editingName}
+                    onChange={(e) => setEditingName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleRename(a.id); if (e.key === 'Escape') setEditingAccountId(null); }}
+                    autoFocus
+                    style={{ flex: 1, fontSize: 13, padding: '3px 6px', border: '1px solid var(--cb-primary-400)', borderRadius: 6 }}
+                  />
+                  <button type="button" onClick={() => handleRename(a.id)} title="Save" style={{ border: 'none', background: 'transparent', color: 'var(--cb-primary-600)', fontWeight: 700, cursor: 'pointer' }}>✓</button>
+                  <button type="button" onClick={() => setEditingAccountId(null)} title="Cancel" style={{ border: 'none', background: 'transparent', color: 'var(--cb-text-secondary)', cursor: 'pointer' }}>×</button>
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, color: 'var(--cb-text-secondary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {a.name}
+                  <button
+                    type="button"
+                    onClick={() => { setEditingAccountId(a.id); setEditingName(a.name); setRenameError(''); }}
+                    title="Rename account"
+                    style={{ border: 'none', background: 'transparent', color: 'var(--cb-text-secondary)', cursor: 'pointer', fontSize: 11, padding: 0 }}
+                  >
+                    ✎
+                  </button>
+                </div>
+              )}
               {a.isDefault && (
-                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--cb-primary-800)', background: 'var(--cb-primary-50)', borderRadius: 999, padding: '2px 7px' }}>DEFAULT</span>
+                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--cb-primary-800)', background: 'var(--cb-primary-50)', borderRadius: 999, padding: '2px 7px', whiteSpace: 'nowrap' }}>DEFAULT</span>
               )}
             </div>
+            {editingAccountId === a.id && renameError && (
+              <div style={{ color: 'var(--cb-danger)', fontSize: 11, marginTop: 2 }}>{renameError}</div>
+            )}
             <div style={{ fontSize: 12, color: 'var(--cb-text-secondary)', marginBottom: 6 }}>
               {a.bank_name || '—'}{a.branch ? ` · ${a.branch}` : ''}{a.account_number ? ` · ${a.account_number}` : ''}
             </div>

@@ -191,7 +191,7 @@ async function generateLicense(req, res) {
   for (const [apiKey, dbKey] of MODULE_FIELDS) {
     if (modules && apiKey in modules) {
       moduleSets.push(`${dbKey} = $${i}`);
-      moduleValues.push(modules[apiKey] ? 1 : 0);
+      moduleValues.push(modules[apiKey] ? '1' : '0');
       i += 1;
     }
   }

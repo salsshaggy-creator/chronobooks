@@ -115,7 +115,7 @@ async function updateCompany(req, res) {
   for (const [apiKey, dbKey] of Object.entries(FIELD_MAP)) {
     if (!(apiKey in body)) continue;
     let value = body[apiKey];
-    if (BOOL_FIELDS.includes(apiKey)) value = value ? 1 : 0;
+    if (BOOL_FIELDS.includes(apiKey)) value = value ? '1' : '0';
     setClauses.push(`${dbKey} = $${i}`);
     values.push(value);
     i += 1;

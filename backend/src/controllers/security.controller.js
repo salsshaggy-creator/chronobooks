@@ -41,7 +41,7 @@ async function updatePasswordPolicy(req, res) {
   if (minLength && Number(minLength) < 6) return res.status(400).json({ error: 'Minimum length cannot be set below 6.' });
   await db.query(
     `UPDATE companies SET password_min_length = $1, password_require_uppercase = $2, password_require_number = $3, password_require_symbol = $4 WHERE id = $5`,
-    [Number(minLength) || 8, requireUppercase ? 1 : 0, requireNumber ? 1 : 0, requireSymbol ? 1 : 0, companyId]
+    [Number(minLength) || 8, requireUppercase ? '1' : '0', requireNumber ? '1' : '0', requireSymbol ? '1' : '0', companyId]
   );
   res.json({ ok: true });
 }

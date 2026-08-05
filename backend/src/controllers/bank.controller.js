@@ -64,7 +64,7 @@ async function createBankAccount(req, res) {
     [
       bankAccountId, companyId, accountId, name, bankName || null, branch || null, accountNumber || null,
       currency || 'GHS', swiftCode || null, iban || null, mobileMoneyWallet || null,
-      Number(openingBalance || 0), isDefault ? 1 : 0,
+      Number(openingBalance || 0), isDefault ? '1' : '0',
     ]
   );
 

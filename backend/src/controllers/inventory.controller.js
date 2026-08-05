@@ -41,7 +41,7 @@ async function createItem(req, res) {
 
   await db.query(
     `INSERT INTO inventory_items (id, company_id, sku, name, unit, category, cost_price, sale_price, quantity_on_hand, reorder_level, is_active)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1)`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true)`,
     [itemId, companyId, sku || null, name, unit || 'unit', category || null, cost, salePrice != null && salePrice !== '' ? Number(salePrice) : null, qty, Number(reorderLevel || 0)]
   );
 
@@ -86,7 +86,7 @@ async function updateItem(req, res) {
       category !== undefined ? category : item.category,
       salePrice !== undefined ? (salePrice === '' ? null : Number(salePrice)) : item.sale_price,
       reorderLevel !== undefined ? Number(reorderLevel) : item.reorder_level,
-      isActive !== undefined ? (isActive ? 1 : 0) : item.is_active,
+      isActive !== undefined ? (isActive ? '1' : '0') : item.is_active,
       id, companyId,
     ]
   );

@@ -12,7 +12,7 @@ async function createBranch(req, res) {
   const { name, isHeadOffice } = req.body;
   if (!name) return res.status(400).json({ error: 'Branch name is required.' });
   const id = crypto.randomUUID();
-  await db.query(`INSERT INTO branches (id, company_id, name, is_head_office) VALUES ($1,$2,$3,$4)`, [id, companyId, name, isHeadOffice ? 1 : 0]);
+  await db.query(`INSERT INTO branches (id, company_id, name, is_head_office) VALUES ($1,$2,$3,$4)`, [id, companyId, name, isHeadOffice ? '1' : '0']);
   res.status(201).json({ id, name });
 }
 

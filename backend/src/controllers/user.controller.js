@@ -100,7 +100,7 @@ async function createUser(req, res) {
   await db.query(
     `INSERT INTO users (id, company_id, email, password_hash, full_name, first_name, last_name, username, phone, employee_number, role_id, is_active)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-    [userId, companyId, email, passwordHash, fullName, firstName, lastName, username || null, phone || null, employeeNumber || null, roleId, isActive === false ? 0 : 1]
+    [userId, companyId, email, passwordHash, fullName, firstName, lastName, username || null, phone || null, employeeNumber || null, roleId, isActive === false ? '0' : '1']
   );
 
   await db.query(`INSERT INTO user_companies (user_id, company_id) VALUES ($1,$2)`, [userId, companyId]);
@@ -132,7 +132,7 @@ async function updateUser(req, res) {
     [
       firstName ?? user.first_name, lastName ?? user.last_name, fullName,
       username ?? user.username, phone ?? user.phone, employeeNumber ?? user.employee_number,
-      roleId ?? user.role_id, isActive === undefined ? user.is_active : (isActive ? 1 : 0),
+      roleId ?? user.role_id, isActive === undefined ? user.is_active : (isActive ? '1' : '0'),
       userId,
     ]
   );
@@ -174,7 +174,7 @@ async function setActive(req, res) {
   const existing = await db.query(`SELECT id FROM users WHERE id = $1 AND company_id = $2`, [userId, companyId]);
   if (!existing.rows[0]) return res.status(404).json({ error: 'User not found.' });
 
-  await db.query(`UPDATE users SET is_active = $1 WHERE id = $2`, [isActive ? 1 : 0, userId]);
+  await db.query(`UPDATE users SET is_active = $1 WHERE id = $2`, [isActive ? '1' : '0', userId]);
   res.json({ ok: true });
 }
 

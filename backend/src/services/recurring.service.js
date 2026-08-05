@@ -75,7 +75,7 @@ async function createRecurring(companyId, userId, body) {
   const id = crypto.randomUUID();
   await db.query(
     `INSERT INTO recurring_transactions (id, company_id, type, name, payload, frequency, due_days, start_date, next_run_date, end_date, is_active, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,$11)`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,$11)`,
     [id, companyId, type, name, JSON.stringify(payload), frequency, dueDays != null ? Number(dueDays) : null, startDate, startDate, endDate || null, userId]
   );
   return { id };
@@ -92,7 +92,7 @@ async function updateRecurring(companyId, id, body) {
   const endDate = 'endDate' in body ? (body.endDate || null) : row.end_date;
   const dueDays = 'dueDays' in body ? (body.dueDays != null ? Number(body.dueDays) : null) : row.due_days;
   const payload = body.payload ? JSON.stringify(body.payload) : row.payload;
-  const isActive = 'isActive' in body ? (body.isActive ? 1 : 0) : row.is_active;
+  const isActive = 'isActive' in body ? (body.isActive ? '1' : '0') : row.is_active;
 
   await db.query(
     `UPDATE recurring_transactions SET name = $1, frequency = $2, end_date = $3, due_days = $4, payload = $5, is_active = $6 WHERE id = $7`,
@@ -182,7 +182,7 @@ async function runDue(companyId, userId, asOfDate) {
       const stillActive = !row.end_date || nextRunDate <= row.end_date;
       await db.query(
         `UPDATE recurring_transactions SET next_run_date = $1, last_run_date = $2, occurrences_posted = occurrences_posted + $3, is_active = $4 WHERE id = $5`,
-        [nextRunDate, results[results.length - 1].date, occurrencesPosted, stillActive ? 1 : 0, row.id]
+        [nextRunDate, results[results.length - 1].date, occurrencesPosted, stillActive ? '1' : '0', row.id]
       );
       processed.push({ recurringTransactionId: row.id, name: row.name, type: row.type, occurrencesPosted, results });
       totalOccurrencesPosted += occurrencesPosted;

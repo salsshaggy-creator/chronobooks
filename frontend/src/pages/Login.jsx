@@ -11,8 +11,8 @@ const TRUST_POINTS = [
 ];
 
 export default function Login({ onLogin }) {
-  const [email, setEmail] = useState('admin@demo-sme.com');
-  const [password, setPassword] = useState('ChronoBooks!123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -165,10 +165,7 @@ export default function Login({ onLogin }) {
               {loading ? 'Signing in…' : 'Sign in'}
             </button>
 
-            <div style={{ fontSize: 11.5, color: 'var(--cb-text-secondary)', textAlign: 'center' }}>
-              Demo login pre-filled — seeded via <code>npm run seed</code>.
-            </div>
-          </form>
+            </form>
 
           <div style={{ fontSize: 12.5, textAlign: 'center', marginTop: 18 }}>
             Don't have an account? <Link to="/signup" style={{ color: 'var(--cb-primary-600)', fontWeight: 600, textDecoration: 'none' }}>Sign up</Link>

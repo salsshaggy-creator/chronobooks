@@ -170,6 +170,87 @@ function Toggle({ label, checked, onChange, disabled }) {
   );
 }
 
+// Handles its own upload/preview state rather than going through the parent `company`
+// object's save flow -- a logo change takes effect immediately (multipart upload, its own
+// endpoint), unlike every other field on this tab which waits for the "Save changes" button.
+function LogoUploader({ hasLogo, disabled, onChanged }) {
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!hasLogo) { setPreview(null); setLoading(false); return; }
+    setLoading(true);
+    api.getCompanyLogoDataUrl().then((url) => setPreview(url || null)).finally(() => setLoading(false));
+  }, [hasLogo]);
+
+  async function handleFileChange(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file later
+    if (!file) return;
+    setError('');
+    setUploading(true);
+    try {
+      await api.uploadCompanyLogo(file);
+      const url = await api.getCompanyLogoDataUrl();
+      setPreview(url);
+      onChanged(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleRemove() {
+    setError('');
+    setUploading(true);
+    try {
+      await api.deleteCompanyLogo();
+      setPreview(null);
+      onChanged(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+      <div style={{
+        width: 96, height: 96, borderRadius: 10, border: '1px solid var(--cb-border)', background: 'var(--cb-bg)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0,
+      }}>
+        {loading ? (
+          <span style={{ fontSize: 11, color: 'var(--cb-text-secondary)' }}>…</span>
+        ) : preview ? (
+          <img src={preview} alt="Company logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+        ) : (
+          <span style={{ fontSize: 11, color: 'var(--cb-text-secondary)', textAlign: 'center', padding: 4 }}>No logo</span>
+        )}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <label style={{
+          display: 'inline-block', padding: '7px 14px', border: '1px solid var(--cb-border)', borderRadius: 8,
+          background: 'var(--cb-surface)', fontSize: 12.5, fontWeight: 600, cursor: disabled ? 'default' : 'pointer',
+          opacity: disabled || uploading ? 0.6 : 1, width: 'fit-content',
+        }}>
+          {uploading ? 'Uploading…' : preview ? 'Replace logo' : 'Upload logo'}
+          <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={handleFileChange} disabled={disabled || uploading} style={{ display: 'none' }} />
+        </label>
+        {preview && !disabled && (
+          <button type="button" onClick={handleRemove} disabled={uploading} style={{ ...ghostButtonStyle, width: 'fit-content', color: 'var(--cb-danger)' }}>
+            Remove logo
+          </button>
+        )}
+        {error && <div style={{ color: 'var(--cb-danger)', fontSize: 12 }}>{error}</div>}
+      </div>
+    </div>
+  );
+}
+
 function CompanyProfileTab({ company: c, set, isAdmin, selectPreset }) {
   const d = isAdmin ? false : true;
   return (
@@ -204,10 +285,17 @@ function CompanyProfileTab({ company: c, set, isAdmin, selectPreset }) {
         <Field label="City" value={c.city} onChange={(v) => set({ city: v })} disabled={d} />
         <Field label="GPS location" value={c.gpsLocation} onChange={(v) => set({ gpsLocation: v })} disabled={d} />
         <Field label="Street address" value={c.address} onChange={(v) => set({ address: v })} disabled={d} span={3} />
-        <Field label="Logo URL" value={c.logoUrl} onChange={(v) => set({ logoUrl: v })} disabled={d} span={1} />
         <Field label="Stamp image URL (optional)" value={c.stampUrl} onChange={(v) => set({ stampUrl: v })} disabled={d} span={1} />
         <Field label="Signature image URL (optional)" value={c.signatureUrl} onChange={(v) => set({ signatureUrl: v })} disabled={d} span={1} />
       </Section>
+
+      <div style={cardStyle}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Company logo</div>
+        <div style={{ fontSize: 12, color: 'var(--cb-text-secondary)', marginBottom: 10 }}>
+          Shown automatically at the top of every invoice, receipt, bill, payment, statement, and report PDF.
+        </div>
+        <LogoUploader hasLogo={c.hasLogo} disabled={d} onChanged={(hasLogo) => set({ hasLogo })} />
+      </div>
 
       <div style={cardStyle}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Brand accent color</div>
@@ -1220,6 +1308,7 @@ function SecurityTab({ isAdmin }) {
 const labelStyle = { fontSize: 13, color: 'var(--cb-text-secondary)' };
 const inputStyle = { display: 'block', width: '100%', marginTop: 4, padding: '8px 10px', border: '1px solid var(--cb-border)', borderRadius: 8, fontSize: 14 };
 const buttonStyle = { padding: '9px 14px', border: 'none', borderRadius: 8, background: 'var(--cb-primary-400)', color: 'var(--cb-primary-900)', fontWeight: 600, fontSize: 13 };
+const ghostButtonStyle = { padding: '7px 14px', border: '1px solid var(--cb-border)', borderRadius: 8, background: 'transparent', color: 'var(--cb-primary-800)', fontWeight: 600, fontSize: 12.5 };
 const thStyle = { padding: '6px 8px', fontWeight: 500 };
 const tdStyle = { padding: '8px 8px' };
 const cardStyle = { background: 'var(--cb-surface)', border: '1px solid var(--cb-border)', borderRadius: 'var(--cb-radius)', padding: 18, marginBottom: 14 };

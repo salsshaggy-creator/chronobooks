@@ -1,4 +1,8 @@
+const fs = require('fs');
+const path = require('path');
 const db = require('../config/db');
+const { companyDir } = require('../services/document.service');
+const { httpError } = require('../services/approval.service');
 
 // Keep in sync with frontend/src/theme/presets.js — the backend validates against
 // the same fixed list so an org can never be saved with an unvetted color.
@@ -80,6 +84,7 @@ function toApiShape(company) {
   out.id = company.id;
   out.setupCompleted = !!company.setup_completed;
   out.selfServe = !!company.self_serve;
+  out.hasLogo = !!company.logo_storage_key;
   return out;
 }
 
@@ -129,4 +134,65 @@ async function updateCompany(req, res) {
   res.json({ ok: true });
 }
 
-module.exports = { getCompany, updateCompany, BRAND_PRESETS };
+const LOGO_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/**
+ * POST /company/logo — uploads (or replaces) the company's logo. Reuses the same
+ * per-company uploads folder as Documents (see document.service.js's companyDir), but
+ * is tracked on the companies row itself (logo_storage_key/logo_mime_type) rather than
+ * in the documents table, since there's only ever one logo per company, not a list.
+ * The old file on disk is removed once the new one's saved so uploads don't pile up.
+ */
+async function uploadLogo(req, res) {
+  const { companyId } = req.user;
+  if (!req.file) throw httpError(400, 'No file was uploaded.');
+  if (!LOGO_MIME_TYPES.has(req.file.mimetype)) {
+    // The shared upload middleware already accepts non-image types (PDFs, Word docs, etc.
+    // for Documents) -- narrow it down here since a logo specifically has to be an image.
+    await fs.promises.unlink(req.file.path).catch(() => {});
+    return res.status(400).json({ error: 'Logo must be a PNG, JPEG, GIF, or WEBP image.' });
+  }
+
+  const existing = await db.query(`SELECT logo_storage_key FROM companies WHERE id = $1`, [companyId]);
+  const previousKey = existing.rows[0]?.logo_storage_key;
+
+  await db.query(`UPDATE companies SET logo_storage_key = $1, logo_mime_type = $2 WHERE id = $3`, [req.file.filename, req.file.mimetype, companyId]);
+
+  if (previousKey && previousKey !== req.file.filename) {
+    fs.promises.unlink(path.join(companyDir(companyId), previousKey)).catch(() => {});
+  }
+
+  res.status(201).json({ ok: true });
+}
+
+/** GET /company/logo — streams the uploaded logo image. Used both by the Settings preview
+ * and by the frontend when building logo-bearing PDFs (fetched once, cached as a data URL). */
+async function getLogo(req, res) {
+  const { companyId } = req.user;
+  const result = await db.query(`SELECT logo_storage_key, logo_mime_type FROM companies WHERE id = $1`, [companyId]);
+  const company = result.rows[0];
+  if (!company?.logo_storage_key) throw httpError(404, 'No logo uploaded yet.');
+
+  const filePath = path.join(companyDir(companyId), company.logo_storage_key);
+  res.setHeader('Content-Type', company.logo_mime_type || 'image/png');
+  res.sendFile(filePath, (err) => {
+    if (err && !res.headersSent) res.status(404).json({ error: 'The logo file is missing from storage.' });
+  });
+}
+
+/** DELETE /company/logo — removes the logo so invoices/receipts/etc. go back to text-only. */
+async function deleteLogo(req, res) {
+  const { companyId } = req.user;
+  const result = await db.query(`SELECT logo_storage_key FROM companies WHERE id = $1`, [companyId]);
+  const storageKey = result.rows[0]?.logo_storage_key;
+
+  await db.query(`UPDATE companies SET logo_storage_key = NULL, logo_mime_type = NULL WHERE id = $1`, [companyId]);
+
+  if (storageKey) {
+    fs.promises.unlink(path.join(companyDir(companyId), storageKey)).catch(() => {});
+  }
+
+  res.json({ ok: true });
+}
+
+module.exports = { getCompany, updateCompany, uploadLogo, getLogo, deleteLogo, BRAND_PRESETS };

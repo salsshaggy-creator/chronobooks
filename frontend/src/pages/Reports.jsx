@@ -118,12 +118,13 @@ export default function Reports() {
     return null;
   }
 
-  function handleDownloadReport(format) {
+  async function handleDownloadReport(format) {
     const payload = buildExportPayload();
     if (!payload) return;
     const filename = `${payload.title.replace(/[^a-z0-9]+/gi, '-')}-${to}`;
     if (format === 'pdf') {
-      downloadPDF(`${filename}.pdf`, payload);
+      const logoDataUrl = await api.getCompanyLogoDataUrl();
+      await downloadPDF(`${filename}.pdf`, { ...payload, logoDataUrl });
     } else {
       downloadCSV(`${filename}.csv`, [
         [payload.title],

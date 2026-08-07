@@ -209,20 +209,22 @@ export default function Sales() {
     }
   }
 
-  function handleDownloadStatement(format) {
+  async function handleDownloadStatement(format) {
     if (!statementData || !selectedCustomer) return;
     const rangeLabel = statementFrom || statementTo ? `${statementFrom || 'start'} to ${statementTo || 'today'}` : 'Full history';
     const columns = ['Date', 'Description', 'Debit', 'Credit', 'Balance'];
     const rows = statementData.transactions.map((t) => [t.date, t.description, t.debit ? currency(t.debit) : '', t.credit ? currency(t.credit) : '', currency(t.balance)]);
     const filename = `Statement-${selectedCustomer.name.replace(/[^a-z0-9]+/gi, '-')}`;
     if (format === 'pdf') {
-      downloadPDF(`${filename}.pdf`, {
+      const logoDataUrl = await api.getCompanyLogoDataUrl();
+      await downloadPDF(`${filename}.pdf`, {
         title: 'Customer Statement',
         subtitle: selectedCustomer.name,
         meta: [rangeLabel, `Opening balance: ${currency(statementData.openingBalance)}`],
         columns,
         rows,
         summary: [`Closing balance: ${currency(statementData.closingBalance)}`],
+        logoDataUrl,
       });
     } else {
       downloadCSV(`${filename}.csv`, [
@@ -292,48 +294,33 @@ export default function Sales() {
     }
   }
 
-  // Downloads an invoice as CSV (opens directly in Excel/Sheets) or PDF -- both built entirely
-  // client-side from the same cached detail fetch, so neither format needs a server round trip.
-  async function handleDownloadInvoice(inv, format) {
+  // Downloads an invoice as a PDF, built entirely client-side from the same cached detail
+  // fetch used by the expanded row, with the company logo (if one's been uploaded) printed
+  // at the top -- see Settings > Company Profile for the upload.
+  async function handleDownloadInvoice(inv) {
     setDownloadingId(inv.id);
     setError('');
     try {
       const detail = await fetchInvoiceDetail(inv.id);
       const outstanding = Number(detail.invoice.total) - Number(detail.invoice.paid);
-      const columns = ['Description', 'Quantity', 'Unit Price', 'Line Total'];
-      const lineRows = detail.lines.map((l) => [l.description, l.quantity, currency(l.unit_price), currency(l.line_total)]);
-      if (format === 'pdf') {
-        downloadPDF(`${detail.invoice.invoice_number}.pdf`, {
-          title: 'Invoice',
-          subtitle: detail.invoice.invoice_number,
-          meta: [
-            `Customer: ${detail.invoice.customer_name}`,
-            `Date: ${detail.invoice.invoice_date}${detail.invoice.due_date ? `  ·  Due: ${detail.invoice.due_date}` : ''}`,
-            `Status: ${detail.invoice.status}`,
-          ],
-          columns,
-          rows: lineRows,
-          summary: [
-            `Total: ${currency(detail.invoice.total)}`,
-            `Paid: ${currency(detail.invoice.paid)}`,
-            `Outstanding: ${currency(outstanding)}`,
-          ],
-        });
-      } else {
-        downloadCSV(`${detail.invoice.invoice_number}.csv`, [
-          ['Invoice', detail.invoice.invoice_number],
-          ['Customer', detail.invoice.customer_name],
-          ['Date', detail.invoice.invoice_date],
-          ['Due date', detail.invoice.due_date || ''],
-          ['Status', detail.invoice.status],
-          ['Total', detail.invoice.total],
-          ['Paid', detail.invoice.paid],
-          ['Outstanding', outstanding],
-          [],
-          columns,
-          ...detail.lines.map((l) => [l.description, l.quantity, l.unit_price, l.line_total]),
-        ]);
-      }
+      const logoDataUrl = await api.getCompanyLogoDataUrl();
+      await downloadPDF(`${detail.invoice.invoice_number}.pdf`, {
+        title: 'Invoice',
+        subtitle: detail.invoice.invoice_number,
+        meta: [
+          `Customer: ${detail.invoice.customer_name}`,
+          `Date: ${detail.invoice.invoice_date}${detail.invoice.due_date ? `  ·  Due: ${detail.invoice.due_date}` : ''}`,
+          `Status: ${detail.invoice.status}`,
+        ],
+        columns: ['Description', 'Quantity', 'Unit Price', 'Line Total'],
+        rows: detail.lines.map((l) => [l.description, l.quantity, currency(l.unit_price), currency(l.line_total)]),
+        summary: [
+          `Total: ${currency(detail.invoice.total)}`,
+          `Paid: ${currency(detail.invoice.paid)}`,
+          `Outstanding: ${currency(outstanding)}`,
+        ],
+        logoDataUrl,
+      });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -341,32 +328,22 @@ export default function Sales() {
     }
   }
 
-  // Downloads a receipt as CSV or PDF -- receipts are simple enough (one payment against one
+  // Downloads a receipt as a PDF -- receipts are simple enough (one payment against one
   // invoice) that no detail fetch is needed; everything is already in the invoice's payload.
-  function handleDownloadReceipt(inv, receipt, format) {
-    const filename = `Receipt-${receipt.id}-${inv.invoice_number}`;
-    const meta = [
-      `Invoice: ${inv.invoice_number}`,
-      `Customer: ${inv.customer_name}`,
-      `Date: ${receipt.receipt_date}`,
-      `Method: ${receipt.payment_method || ''}`,
-    ];
-    if (format === 'pdf') {
-      downloadPDF(`${filename}.pdf`, {
-        title: 'Receipt',
-        subtitle: `Payment received for ${inv.invoice_number}`,
-        meta,
-        summary: [`Amount received: ${currency(receipt.amount)}`],
-      });
-    } else {
-      downloadCSV(`${filename}.csv`, [
-        ['Receipt for invoice', inv.invoice_number],
-        ['Customer', inv.customer_name],
-        ['Date', receipt.receipt_date],
-        ['Method', receipt.payment_method || ''],
-        ['Amount received', receipt.amount],
-      ]);
-    }
+  async function handleDownloadReceipt(inv, receipt) {
+    const logoDataUrl = await api.getCompanyLogoDataUrl();
+    await downloadPDF(`Receipt-${receipt.id}-${inv.invoice_number}.pdf`, {
+      title: 'Receipt',
+      subtitle: `Payment received for ${inv.invoice_number}`,
+      meta: [
+        `Invoice: ${inv.invoice_number}`,
+        `Customer: ${inv.customer_name}`,
+        `Date: ${receipt.receipt_date}`,
+        `Method: ${receipt.payment_method || ''}`,
+      ],
+      summary: [`Amount received: ${currency(receipt.amount)}`],
+      logoDataUrl,
+    });
   }
 
   return (
@@ -704,10 +681,7 @@ export default function Sales() {
                   </td>
                   <td style={tdStyle}>
                     <div style={{ display: 'flex', gap: 4 }}>
-                      <button type="button" onClick={() => handleDownloadInvoice(inv, 'csv')} disabled={downloadingId === inv.id} style={ghostButtonStyle} title="Download as CSV (opens in Excel)">
-                        {downloadingId === inv.id ? '…' : 'CSV'}
-                      </button>
-                      <button type="button" onClick={() => handleDownloadInvoice(inv, 'pdf')} disabled={downloadingId === inv.id} style={ghostButtonStyle} title="Download as PDF">
+                      <button type="button" onClick={() => handleDownloadInvoice(inv)} disabled={downloadingId === inv.id} style={ghostButtonStyle} title="Download as PDF">
                         {downloadingId === inv.id ? '…' : 'PDF'}
                       </button>
                     </div>
@@ -765,8 +739,7 @@ export default function Sales() {
                           {invoiceDetail[inv.id].receipts.map((r) => (
                             <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, padding: '4px 10px' }}>
                               <span style={{ flex: 1 }}>{r.receipt_date} — {currency(r.amount)}{r.payment_method ? ` (${r.payment_method})` : ''}</span>
-                              <button type="button" onClick={() => handleDownloadReceipt(inv, r, 'csv')} style={ghostButtonStyle} title="Download receipt as CSV">CSV</button>
-                              <button type="button" onClick={() => handleDownloadReceipt(inv, r, 'pdf')} style={ghostButtonStyle} title="Download receipt as PDF">PDF</button>
+                              <button type="button" onClick={() => handleDownloadReceipt(inv, r)} style={ghostButtonStyle} title="Download receipt as PDF">PDF</button>
                             </div>
                           ))}
                         </div>

@@ -100,6 +100,53 @@ async function downloadFile(id, fileName) {
   URL.revokeObjectURL(url);
 }
 
+async function uploadCompanyLogo(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(`${BASE_URL}/company/logo`, {
+    method: 'POST',
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    body: formData,
+    credentials: 'include',
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Upload failed (${res.status})`);
+  return body;
+}
+
+// Fetched once per page load and cached as a data URL (rather than an object URL) because
+// jsPDF's addImage() needs either a data URL or raw bytes, and a data URL also survives
+// being handed to multiple downloadPDF() calls without re-fetching each time.
+let logoDataUrlCache = null;
+let logoFetchPromise = null;
+
+async function getCompanyLogoDataUrl() {
+  if (logoDataUrlCache !== null) return logoDataUrlCache;
+  if (!logoFetchPromise) {
+    logoFetchPromise = fetch(`${BASE_URL}/company/logo`, {
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+      credentials: 'include',
+    }).then(async (res) => {
+      if (!res.ok) { logoDataUrlCache = ''; return ''; }
+      const blob = await res.blob();
+      logoDataUrlCache = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => resolve('');
+        reader.readAsDataURL(blob);
+      });
+      return logoDataUrlCache;
+    }).catch(() => { logoDataUrlCache = ''; return ''; }).finally(() => { logoFetchPromise = null; });
+  }
+  return logoFetchPromise;
+}
+
+// Called after a logo is uploaded/removed so the next PDF download re-fetches instead of
+// reusing a stale (or now-missing) cached image.
+function invalidateCompanyLogoCache() {
+  logoDataUrlCache = null;
+}
+
 export const api = {
   login: (email, password) => request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   me: () => request('/auth/me'),
@@ -258,6 +305,12 @@ export const api = {
   listDocuments: (entityType, entityId) => request(`/documents?entityType=${entityType}&entityId=${entityId}`),
   uploadDocument: (entityType, entityId, file) => uploadFile(entityType, entityId, file),
   downloadDocument: (id, fileName) => downloadFile(id, fileName),
+  uploadCompanyLogo: async (file) => { const r = await uploadCompanyLogo(file); invalidateCompanyLogoCache(); return r; },
+  deleteCompanyLogo: async () => { const r = await request('/company/logo', { method: 'DELETE' }); invalidateCompanyLogoCache(); return r; },
+  // Used both for the Settings preview thumbnail and for embedding the logo in PDFs -- the
+  // endpoint requires a Bearer token, so a plain <img src> can't hit it directly; this always
+  // goes through fetch() with the auth header and hands back a data URL either way.
+  getCompanyLogoDataUrl: () => getCompanyLogoDataUrl(),
   deleteDocument: (id) => request(`/documents/${id}`, { method: 'DELETE' }),
 
   listNotifications: () => request('/notifications'),

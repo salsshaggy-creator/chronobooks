@@ -212,20 +212,22 @@ export default function Purchases() {
     }
   }
 
-  function handleDownloadStatement(format) {
+  async function handleDownloadStatement(format) {
     if (!statementData || !selectedSupplier) return;
     const rangeLabel = statementFrom || statementTo ? `${statementFrom || 'start'} to ${statementTo || 'today'}` : 'Full history';
     const columns = ['Date', 'Description', 'Debit', 'Credit', 'Balance'];
     const rows = statementData.transactions.map((t) => [t.date, t.description, t.debit ? currency(t.debit) : '', t.credit ? currency(t.credit) : '', currency(t.balance)]);
     const filename = `Statement-${selectedSupplier.name.replace(/[^a-z0-9]+/gi, '-')}`;
     if (format === 'pdf') {
-      downloadPDF(`${filename}.pdf`, {
+      const logoDataUrl = await api.getCompanyLogoDataUrl();
+      await downloadPDF(`${filename}.pdf`, {
         title: 'Supplier Statement',
         subtitle: selectedSupplier.name,
         meta: [rangeLabel, `Opening balance: ${currency(statementData.openingBalance)}`],
         columns,
         rows,
         summary: [`Closing balance: ${currency(statementData.closingBalance)}`],
+        logoDataUrl,
       });
     } else {
       downloadCSV(`${filename}.csv`, [
@@ -304,7 +306,8 @@ export default function Purchases() {
       const columns = ['Description', 'Quantity', 'Unit Price', 'Line Total'];
       const lineRows = detail.lines.map((l) => [l.description, l.quantity, currency(l.unit_price), currency(l.line_total)]);
       if (format === 'pdf') {
-        downloadPDF(`${detail.bill.bill_number}.pdf`, {
+        const logoDataUrl = await api.getCompanyLogoDataUrl();
+        await downloadPDF(`${detail.bill.bill_number}.pdf`, {
           title: 'Bill',
           subtitle: detail.bill.bill_number,
           meta: [
@@ -319,6 +322,7 @@ export default function Purchases() {
             `Paid: ${currency(detail.bill.paid)}`,
             `Outstanding: ${currency(outstanding)}`,
           ],
+          logoDataUrl,
         });
       } else {
         downloadCSV(`${detail.bill.bill_number}.csv`, [
@@ -344,7 +348,7 @@ export default function Purchases() {
 
   // Downloads a supplier payment as CSV or PDF -- a payment is simple enough (one amount
   // against one bill) that everything needed is already on the record itself.
-  function handleDownloadPayment(bill, payment, format) {
+  async function handleDownloadPayment(bill, payment, format) {
     const filename = `Payment-${payment.id}-${bill.bill_number}`;
     const meta = [
       `Bill: ${bill.bill_number}`,
@@ -353,11 +357,13 @@ export default function Purchases() {
       `Method: ${payment.payment_method || ''}`,
     ];
     if (format === 'pdf') {
-      downloadPDF(`${filename}.pdf`, {
+      const logoDataUrl = await api.getCompanyLogoDataUrl();
+      await downloadPDF(`${filename}.pdf`, {
         title: 'Payment',
         subtitle: `Payment made for ${bill.bill_number}`,
         meta,
         summary: [`Amount paid: ${currency(payment.amount)}`],
+        logoDataUrl,
       });
     } else {
       downloadCSV(`${filename}.csv`, [

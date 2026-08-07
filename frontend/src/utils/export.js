@@ -42,8 +42,33 @@ export function downloadCSV(filename, rows) {
 }
 
 /**
- * Downloads a simple one-table PDF: a title, an optional subtitle (e.g. a date range or
- * "Invoice INV-0001"), an optional set of key/value summary lines (e.g. totals), and a table.
+ * Draws whatever image format the browser can decode (PNG/JPEG/GIF/WEBP) onto an offscreen
+ * canvas and reads it back out as a PNG data URL -- jsPDF's addImage() only reliably supports
+ * PNG/JPEG, so this normalizes every logo to one format instead of branching on the original
+ * upload's mime type. Also hands back the natural pixel size so the caller can scale it down
+ * to a sensible print size without distorting the aspect ratio.
+ */
+function normalizeImageToPng(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      resolve({ dataUrl: canvas.toDataURL('image/png'), width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => reject(new Error('Could not load the logo image.'));
+    img.src = dataUrl;
+  });
+}
+
+/**
+ * Downloads a simple one-table PDF: an optional logo, a title, an optional subtitle (e.g. a
+ * date range or "Invoice INV-0001"), an optional set of key/value summary lines (e.g.
+ * totals), and a table. Async because embedding a logo requires decoding it via an <img>
+ * element first -- every caller should `await` this (or `.catch()` it) rather than fire-and-forget.
  *
  * @param {string} filename
  * @param {object} opts
@@ -53,11 +78,28 @@ export function downloadCSV(filename, rows) {
  * @param {string[]} opts.columns - table header cells.
  * @param {Array<Array<string|number>>} opts.rows - table body rows.
  * @param {string[]} [opts.summary] - lines rendered below the table, right-aligned (e.g. totals).
+ * @param {string} [opts.logoDataUrl] - the company logo (any browser-decodable format) to print
+ *   at the top of the page, above the title. Silently skipped if it fails to decode.
  */
-export function downloadPDF(filename, { title, subtitle, meta = [], columns, rows, summary = [] }) {
+export async function downloadPDF(filename, { title, subtitle, meta = [], columns, rows, summary = [], logoDataUrl }) {
   const doc = new jsPDF({ unit: 'pt' });
   const marginLeft = 40;
   let y = 48;
+
+  if (logoDataUrl) {
+    try {
+      const { dataUrl: pngDataUrl, width, height } = await normalizeImageToPng(logoDataUrl);
+      const maxW = 110;
+      const maxH = 46;
+      const scale = Math.min(maxW / width, maxH / height, 1);
+      const w = width * scale;
+      const h = height * scale;
+      doc.addImage(pngDataUrl, 'PNG', marginLeft, 26, w, h);
+      y = Math.max(y, 26 + h + 18);
+    } catch {
+      // A broken/unreadable logo shouldn't block the rest of the PDF from generating.
+    }
+  }
 
   doc.setFontSize(16);
   doc.setFont(undefined, 'bold');

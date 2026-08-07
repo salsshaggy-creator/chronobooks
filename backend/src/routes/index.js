@@ -110,6 +110,9 @@ router.get('/reports/cash-flow', requireAuth, asyncHandler(reportController.getC
 
 router.get('/company', requireAuth, asyncHandler(companyController.getCompany));
 router.put('/company', requireAuth, requireRole('administrator'), asyncHandler(companyController.updateCompany));
+router.post('/company/logo', requireAuth, requireRole('administrator'), uploadMiddleware, asyncHandler(companyController.uploadLogo));
+router.get('/company/logo', requireAuth, asyncHandler(companyController.getLogo));
+router.delete('/company/logo', requireAuth, requireRole('administrator'), asyncHandler(companyController.deleteLogo));
 
 router.get('/users', requireAuth, asyncHandler(userController.listUsers));
 router.post('/users', requireAuth, requireRole(...ADMIN_ROLES), asyncHandler(userController.createUser));

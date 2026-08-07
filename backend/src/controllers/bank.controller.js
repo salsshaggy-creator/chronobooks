@@ -206,7 +206,7 @@ async function interest(req, res) {
 async function listTransactions(req, res) {
   const { companyId } = req.user;
   const result = await db.query(
-    `SELECT je.id, je.entry_date, je.description, je.source_type,
+    `SELECT je.id, je.entry_date, je.description, je.source_type, je.voided_at, je.reversal_of,
             (SELECT COALESCE(SUM(debit),0) FROM journal_lines WHERE journal_entry_id = je.id) as total
      FROM journal_entries je
      WHERE je.company_id = $1 AND je.source_type IN ('deposit','withdrawal','transfer','bank_charge','interest')

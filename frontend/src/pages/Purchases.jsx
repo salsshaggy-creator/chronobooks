@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api/client';
 import Attachments from '../components/Attachments';
+import { downloadCSV, downloadPDF } from '../utils/export';
 
 const CATEGORIES = ['Inventory', 'Fuel', 'Utilities', 'Rent', 'Office Supplies', 'Marketing', 'Bank Charges', 'Miscellaneous'];
 const currency = (n) => `GHS ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
@@ -36,11 +37,33 @@ export default function Purchases() {
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentError, setPaymentError] = useState('');
   const [expandedId, setExpandedId] = useState(null);
+  const [billDetail, setBillDetail] = useState({}); // billId -> { bill, lines, payments }, fetched lazily
+  const [loadingDetailId, setLoadingDetailId] = useState(null);
+  const [downloadingId, setDownloadingId] = useState(null);
+
+  const [voidConfirmId, setVoidConfirmId] = useState(null);
+  const [voidingId, setVoidingId] = useState(null);
+  const [voidError, setVoidError] = useState({});
 
   const [newSupplierOpen, setNewSupplierOpen] = useState(false);
   const [newSupplier, setNewSupplier] = useState({ name: '', email: '', phone: '' });
   const [newSupplierError, setNewSupplierError] = useState('');
   const [newSupplierSaving, setNewSupplierSaving] = useState(false);
+
+  const [editSupplierOpen, setEditSupplierOpen] = useState(false);
+  const [editSupplier, setEditSupplier] = useState({ name: '', email: '', phone: '' });
+  const [editSupplierError, setEditSupplierError] = useState('');
+  const [editSupplierSaving, setEditSupplierSaving] = useState(false);
+  const [deleteSupplierConfirm, setDeleteSupplierConfirm] = useState(false);
+  const [deleteSupplierError, setDeleteSupplierError] = useState('');
+  const [deleteSupplierSaving, setDeleteSupplierSaving] = useState(false);
+
+  const [statementOpen, setStatementOpen] = useState(false);
+  const [statementFrom, setStatementFrom] = useState('');
+  const [statementTo, setStatementTo] = useState('');
+  const [statementData, setStatementData] = useState(null);
+  const [statementLoading, setStatementLoading] = useState(false);
+  const [statementError, setStatementError] = useState('');
 
   const isStockReceipt = form.expenseCategory === 'Inventory';
 
@@ -127,6 +150,111 @@ export default function Purchases() {
     }
   }
 
+  const selectedSupplier = suppliers.find((s) => s.id === form.supplierId);
+
+  function openEditSupplier() {
+    if (!selectedSupplier) return;
+    setEditSupplier({ name: selectedSupplier.name || '', email: selectedSupplier.email || '', phone: selectedSupplier.phone || '' });
+    setEditSupplierError('');
+    setEditSupplierOpen(true);
+    setDeleteSupplierConfirm(false);
+  }
+
+  async function handleUpdateSupplier(e) {
+    e.preventDefault();
+    setEditSupplierError('');
+    if (!editSupplier.name.trim()) { setEditSupplierError('Supplier name is required.'); return; }
+    setEditSupplierSaving(true);
+    try {
+      await api.updateSupplier(form.supplierId, {
+        name: editSupplier.name.trim(),
+        email: editSupplier.email || undefined,
+        phone: editSupplier.phone || undefined,
+      });
+      setEditSupplierOpen(false);
+      load();
+    } catch (err) {
+      setEditSupplierError(err.message);
+    } finally {
+      setEditSupplierSaving(false);
+    }
+  }
+
+  async function handleDeleteSupplier() {
+    setDeleteSupplierError('');
+    setDeleteSupplierSaving(true);
+    try {
+      await api.deleteSupplier(form.supplierId);
+      setDeleteSupplierConfirm(false);
+      setForm((f) => ({ ...f, supplierId: '' }));
+      load();
+    } catch (err) {
+      setDeleteSupplierError(err.message);
+    } finally {
+      setDeleteSupplierSaving(false);
+    }
+  }
+
+  // Fetches and shows the selected supplier's statement (their payable ledger: every bill
+  // and every payment, running balance). Re-fetches whenever the date range changes.
+  async function openStatement() {
+    if (!selectedSupplier) return;
+    setStatementOpen(true);
+    setStatementError('');
+    setStatementLoading(true);
+    try {
+      const data = await api.getSupplierStatement(form.supplierId, { from: statementFrom, to: statementTo });
+      setStatementData(data);
+    } catch (err) {
+      setStatementError(err.message);
+    } finally {
+      setStatementLoading(false);
+    }
+  }
+
+  function handleDownloadStatement(format) {
+    if (!statementData || !selectedSupplier) return;
+    const rangeLabel = statementFrom || statementTo ? `${statementFrom || 'start'} to ${statementTo || 'today'}` : 'Full history';
+    const columns = ['Date', 'Description', 'Debit', 'Credit', 'Balance'];
+    const rows = statementData.transactions.map((t) => [t.date, t.description, t.debit ? currency(t.debit) : '', t.credit ? currency(t.credit) : '', currency(t.balance)]);
+    const filename = `Statement-${selectedSupplier.name.replace(/[^a-z0-9]+/gi, '-')}`;
+    if (format === 'pdf') {
+      downloadPDF(`${filename}.pdf`, {
+        title: 'Supplier Statement',
+        subtitle: selectedSupplier.name,
+        meta: [rangeLabel, `Opening balance: ${currency(statementData.openingBalance)}`],
+        columns,
+        rows,
+        summary: [`Closing balance: ${currency(statementData.closingBalance)}`],
+      });
+    } else {
+      downloadCSV(`${filename}.csv`, [
+        ['Statement for', selectedSupplier.name],
+        ['Period', rangeLabel],
+        ['Opening balance', statementData.openingBalance],
+        [],
+        columns,
+        ...statementData.transactions.map((t) => [t.date, t.description, t.debit || '', t.credit || '', t.balance]),
+        [],
+        ['Closing balance', statementData.closingBalance],
+      ]);
+    }
+  }
+
+  async function handleVoidBill(id) {
+    setVoidingId(id);
+    setVoidError((e) => ({ ...e, [id]: '' }));
+    try {
+      await api.voidBill(id);
+      setVoidConfirmId(null);
+      load();
+    } catch (err) {
+      setVoidError((e) => ({ ...e, [id]: err.message }));
+    } finally {
+      setVoidingId(null);
+    }
+  }
+
   async function handlePayment(billId) {
     setPaymentError('');
     try {
@@ -139,9 +267,106 @@ export default function Purchases() {
       });
       setPaymentFor(null);
       setPaymentAmount('');
+      // Drop the cached detail so re-expanding this bill re-fetches it with the new payment.
+      setBillDetail((m) => { const n = { ...m }; delete n[billId]; return n; });
       load();
     } catch (err) {
       setPaymentError(err.message);
+    }
+  }
+
+  // Fetches a bill's line items + payments once and caches them by id -- shared by the
+  // expanded detail view and the CSV/PDF download so neither refetches what the other has.
+  async function fetchBillDetail(id) {
+    if (billDetail[id]) return billDetail[id];
+    const detail = await api.getBill(id);
+    setBillDetail((m) => ({ ...m, [id]: detail }));
+    return detail;
+  }
+
+  async function toggleExpand(id) {
+    if (expandedId === id) { setExpandedId(null); return; }
+    setExpandedId(id);
+    if (!billDetail[id]) {
+      setLoadingDetailId(id);
+      try { await fetchBillDetail(id); } catch (err) { setError(err.message); } finally { setLoadingDetailId(null); }
+    }
+  }
+
+  // Downloads a bill as CSV (opens directly in Excel/Sheets) or PDF -- both built entirely
+  // client-side from the same cached detail fetch, so neither format needs a server round trip.
+  async function handleDownloadBill(bill, format) {
+    setDownloadingId(bill.id);
+    setError('');
+    try {
+      const detail = await fetchBillDetail(bill.id);
+      const outstanding = Number(detail.bill.total) - Number(detail.bill.paid);
+      const columns = ['Description', 'Quantity', 'Unit Price', 'Line Total'];
+      const lineRows = detail.lines.map((l) => [l.description, l.quantity, currency(l.unit_price), currency(l.line_total)]);
+      if (format === 'pdf') {
+        downloadPDF(`${detail.bill.bill_number}.pdf`, {
+          title: 'Bill',
+          subtitle: detail.bill.bill_number,
+          meta: [
+            `Supplier: ${detail.bill.supplier_name}`,
+            `Date: ${detail.bill.bill_date}${detail.bill.due_date ? `  ·  Due: ${detail.bill.due_date}` : ''}`,
+            `Status: ${detail.bill.status}`,
+          ],
+          columns,
+          rows: lineRows,
+          summary: [
+            `Total: ${currency(detail.bill.total)}`,
+            `Paid: ${currency(detail.bill.paid)}`,
+            `Outstanding: ${currency(outstanding)}`,
+          ],
+        });
+      } else {
+        downloadCSV(`${detail.bill.bill_number}.csv`, [
+          ['Bill', detail.bill.bill_number],
+          ['Supplier', detail.bill.supplier_name],
+          ['Date', detail.bill.bill_date],
+          ['Due date', detail.bill.due_date || ''],
+          ['Status', detail.bill.status],
+          ['Total', detail.bill.total],
+          ['Paid', detail.bill.paid],
+          ['Outstanding', outstanding],
+          [],
+          columns,
+          ...detail.lines.map((l) => [l.description, l.quantity, l.unit_price, l.line_total]),
+        ]);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
+  // Downloads a supplier payment as CSV or PDF -- a payment is simple enough (one amount
+  // against one bill) that everything needed is already on the record itself.
+  function handleDownloadPayment(bill, payment, format) {
+    const filename = `Payment-${payment.id}-${bill.bill_number}`;
+    const meta = [
+      `Bill: ${bill.bill_number}`,
+      `Supplier: ${bill.supplier_name}`,
+      `Date: ${payment.payment_date}`,
+      `Method: ${payment.payment_method || ''}`,
+    ];
+    if (format === 'pdf') {
+      downloadPDF(`${filename}.pdf`, {
+        title: 'Payment',
+        subtitle: `Payment made for ${bill.bill_number}`,
+        meta,
+        summary: [`Amount paid: ${currency(payment.amount)}`],
+      });
+    } else {
+      downloadCSV(`${filename}.csv`, [
+        ['Payment for bill', bill.bill_number],
+        ['Supplier', bill.supplier_name],
+        ['Date', payment.payment_date],
+        ['Method', payment.payment_method || ''],
+        ['Amount paid', payment.amount],
+      ]);
     }
   }
 
@@ -170,13 +395,133 @@ export default function Purchases() {
           </select>
         </label>
 
-        <button
-          type="button"
-          onClick={() => setNewSupplierOpen(true)}
-          style={{ ...ghostButtonStyle, alignSelf: 'flex-start' }}
-        >
-          + Add new supplier
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => setNewSupplierOpen(true)}
+            style={ghostButtonStyle}
+          >
+            + Add new supplier
+          </button>
+          {selectedSupplier && (
+            <>
+              <button type="button" onClick={openEditSupplier} style={ghostButtonStyle}>
+                ✎ Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => { setDeleteSupplierConfirm(true); setEditSupplierOpen(false); setDeleteSupplierError(''); }}
+                style={{ ...ghostButtonStyle, color: 'var(--cb-danger)' }}
+              >
+                🗑 Delete
+              </button>
+              <button type="button" onClick={openStatement} style={ghostButtonStyle}>
+                📄 Statement
+              </button>
+            </>
+          )}
+        </div>
+
+        {statementOpen && selectedSupplier && (
+          <div style={{ border: '1px solid var(--cb-border)', borderRadius: 8, padding: 12, background: 'var(--cb-bg)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600 }}>Statement — {selectedSupplier.name}</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <label style={{ ...labelStyle, flex: 1 }}>
+                From
+                <input type="date" value={statementFrom} onChange={(e) => setStatementFrom(e.target.value)} style={inputStyle} />
+              </label>
+              <label style={{ ...labelStyle, flex: 1 }}>
+                To
+                <input type="date" value={statementTo} onChange={(e) => setStatementTo(e.target.value)} style={inputStyle} />
+              </label>
+            </div>
+            <button type="button" onClick={openStatement} disabled={statementLoading} style={{ ...buttonStyle, marginTop: 0 }}>
+              {statementLoading ? 'Loading…' : 'Refresh'}
+            </button>
+            {statementError && <div style={{ color: 'var(--cb-danger)', fontSize: 12.5 }}>{statementError}</div>}
+            {statementData && (
+              <>
+                <div style={{ fontSize: 12, color: 'var(--cb-text-secondary)' }}>Opening balance: {currency(statementData.openingBalance)}</div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left', color: 'var(--cb-text-secondary)' }}>
+                      <th style={{ padding: '4px 6px' }}>Date</th>
+                      <th style={{ padding: '4px 6px' }}>Description</th>
+                      <th style={{ padding: '4px 6px', textAlign: 'right' }}>Debit</th>
+                      <th style={{ padding: '4px 6px', textAlign: 'right' }}>Credit</th>
+                      <th style={{ padding: '4px 6px', textAlign: 'right' }}>Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {statementData.transactions.map((t, i) => (
+                      <tr key={i} style={{ borderTop: '1px solid var(--cb-border)' }}>
+                        <td style={{ padding: '4px 6px' }}>{t.date}</td>
+                        <td style={{ padding: '4px 6px' }}>{t.description}</td>
+                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>{t.debit ? currency(t.debit) : ''}</td>
+                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>{t.credit ? currency(t.credit) : ''}</td>
+                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>{currency(t.balance)}</td>
+                      </tr>
+                    ))}
+                    {statementData.transactions.length === 0 && (
+                      <tr><td colSpan={5} style={{ padding: '8px 6px', color: 'var(--cb-text-secondary)' }}>No activity in this period.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+                <div style={{ fontSize: 12.5, fontWeight: 600 }}>Closing balance: {currency(statementData.closingBalance)}</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" onClick={() => handleDownloadStatement('csv')} style={{ ...ghostButtonStyle, flex: 1 }}>Download CSV</button>
+                  <button type="button" onClick={() => handleDownloadStatement('pdf')} style={{ ...ghostButtonStyle, flex: 1 }}>Download PDF</button>
+                </div>
+              </>
+            )}
+            <button type="button" onClick={() => setStatementOpen(false)} style={ghostButtonStyle}>Close</button>
+          </div>
+        )}
+
+        {deleteSupplierConfirm && selectedSupplier && (
+          <div style={{ border: '1px solid var(--cb-danger)', borderRadius: 8, padding: 12, background: 'var(--cb-bg)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 12.5 }}>
+              Delete <strong>{selectedSupplier.name}</strong>? This can’t be undone.
+              {' '}Suppliers with bills on record can’t be deleted — edit their details instead.
+            </div>
+            {deleteSupplierError && <div style={{ color: 'var(--cb-danger)', fontSize: 12.5 }}>{deleteSupplierError}</div>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" onClick={handleDeleteSupplier} disabled={deleteSupplierSaving} style={{ ...buttonStyle, marginTop: 0, flex: 1, background: 'var(--cb-danger)', color: '#fff' }}>
+                {deleteSupplierSaving ? 'Deleting…' : 'Delete supplier'}
+              </button>
+              <button type="button" onClick={() => setDeleteSupplierConfirm(false)} style={{ ...ghostButtonStyle, flex: 1 }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {editSupplierOpen && selectedSupplier && (
+          <div style={{ border: '1px solid var(--cb-border)', borderRadius: 8, padding: 12, background: 'var(--cb-bg)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600 }}>Edit supplier</div>
+            <label style={labelStyle}>
+              Name
+              <input value={editSupplier.name} onChange={(e) => setEditSupplier({ ...editSupplier, name: e.target.value })} style={inputStyle} required />
+            </label>
+            <label style={labelStyle}>
+              Email (optional)
+              <input type="email" value={editSupplier.email} onChange={(e) => setEditSupplier({ ...editSupplier, email: e.target.value })} style={inputStyle} />
+            </label>
+            <label style={labelStyle}>
+              Phone (optional)
+              <input value={editSupplier.phone} onChange={(e) => setEditSupplier({ ...editSupplier, phone: e.target.value })} style={inputStyle} />
+            </label>
+            {editSupplierError && <div style={{ color: 'var(--cb-danger)', fontSize: 12.5 }}>{editSupplierError}</div>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" onClick={handleUpdateSupplier} disabled={editSupplierSaving} style={{ ...buttonStyle, marginTop: 0, flex: 1 }}>
+                {editSupplierSaving ? 'Saving…' : 'Save changes'}
+              </button>
+              <button type="button" onClick={() => setEditSupplierOpen(false)} style={{ ...ghostButtonStyle, flex: 1 }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {newSupplierOpen && (
           <div style={{ border: '1px solid var(--cb-border)', borderRadius: 8, padding: 12, background: 'var(--cb-bg)', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -225,7 +570,7 @@ export default function Purchases() {
             }}
             style={inputStyle}
           >
-            {(inventoryEnabled ? CATEGORIES : CATEGORIES.filter((c) => c !== 'Inventory')).map((c) => <option key={c} value={c}>{c}</option>)}
+            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </label>
 
@@ -319,6 +664,8 @@ export default function Purchases() {
               <th style={thStyle}>Status</th>
               <th style={thStyle}></th>
               <th style={thStyle}></th>
+              <th style={thStyle}></th>
+              <th style={thStyle}></th>
             </tr>
           </thead>
           <tbody>
@@ -365,14 +712,79 @@ export default function Purchases() {
                     )}
                   </td>
                   <td style={tdStyle}>
-                    <button type="button" onClick={() => setExpandedId(expandedId === b.id ? null : b.id)} style={ghostButtonStyle} title="Attachments">
-                      📎
+                    <button type="button" onClick={() => toggleExpand(b.id)} style={ghostButtonStyle} title="Details & attachments">
+                      {expandedId === b.id ? '▲' : '▾'} Details
                     </button>
+                  </td>
+                  <td style={tdStyle}>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button type="button" onClick={() => handleDownloadBill(b, 'csv')} disabled={downloadingId === b.id} style={ghostButtonStyle} title="Download as CSV (opens in Excel)">
+                        {downloadingId === b.id ? '…' : 'CSV'}
+                      </button>
+                      <button type="button" onClick={() => handleDownloadBill(b, 'pdf')} disabled={downloadingId === b.id} style={ghostButtonStyle} title="Download as PDF">
+                        {downloadingId === b.id ? '…' : 'PDF'}
+                      </button>
+                    </div>
+                  </td>
+                  <td style={tdStyle}>
+                    {b.status === 'void' ? (
+                      <span style={{ fontSize: 11, color: 'var(--cb-text-secondary)' }}>—</span>
+                    ) : voidConfirmId === b.id ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button type="button" onClick={() => handleVoidBill(b.id)} disabled={voidingId === b.id} style={{ ...ghostButtonStyle, color: 'var(--cb-danger)' }}>
+                            {voidingId === b.id ? 'Voiding…' : 'Confirm void'}
+                          </button>
+                          <button type="button" onClick={() => setVoidConfirmId(null)} style={ghostButtonStyle}>Cancel</button>
+                        </div>
+                        {voidError[b.id] && <div style={{ color: 'var(--cb-danger)', fontSize: 10.5, maxWidth: 220 }}>{voidError[b.id]}</div>}
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => setVoidConfirmId(b.id)} style={{ ...ghostButtonStyle, color: 'var(--cb-danger)' }} title="Void this bill">
+                        Void
+                      </button>
+                    )}
                   </td>
                 </tr>
                 {expandedId === b.id && (
                   <tr>
-                    <td colSpan={8} style={{ padding: '0 0 10px' }}>
+                    <td colSpan={10} style={{ padding: '0 0 14px' }}>
+                      {loadingDetailId === b.id ? (
+                        <div style={{ fontSize: 12.5, color: 'var(--cb-text-secondary)', padding: '8px 0' }}>Loading line items…</div>
+                      ) : billDetail[b.id] ? (
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, background: 'var(--cb-bg)', borderRadius: 8, marginBottom: 10 }}>
+                          <thead>
+                            <tr style={{ color: 'var(--cb-text-secondary)' }}>
+                              <th style={{ ...thStyle, padding: '6px 10px' }}>Description</th>
+                              <th style={{ ...thStyle, padding: '6px 10px', textAlign: 'right' }}>Qty</th>
+                              <th style={{ ...thStyle, padding: '6px 10px', textAlign: 'right' }}>Unit Price</th>
+                              <th style={{ ...thStyle, padding: '6px 10px', textAlign: 'right' }}>Line Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {billDetail[b.id].lines.map((l) => (
+                              <tr key={l.id} style={{ borderTop: '1px solid var(--cb-border)' }}>
+                                <td style={{ padding: '6px 10px' }}>{l.description}{l.item_name && l.item_name !== l.description ? ` (${l.item_name})` : ''}</td>
+                                <td style={{ padding: '6px 10px', textAlign: 'right' }}>{l.quantity}</td>
+                                <td style={{ padding: '6px 10px', textAlign: 'right' }}>{currency(l.unit_price)}</td>
+                                <td style={{ padding: '6px 10px', textAlign: 'right' }}>{currency(l.line_total)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : null}
+                      {billDetail[b.id]?.payments?.length > 0 && (
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--cb-text-secondary)', marginBottom: 4 }}>Payments made</div>
+                          {billDetail[b.id].payments.map((p) => (
+                            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, padding: '4px 10px' }}>
+                              <span style={{ flex: 1 }}>{p.payment_date} — {currency(p.amount)}{p.payment_method ? ` (${p.payment_method})` : ''}</span>
+                              <button type="button" onClick={() => handleDownloadPayment(b, p, 'csv')} style={ghostButtonStyle} title="Download payment as CSV">CSV</button>
+                              <button type="button" onClick={() => handleDownloadPayment(b, p, 'pdf')} style={ghostButtonStyle} title="Download payment as PDF">PDF</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       <Attachments entityType="bill" entityId={b.id} />
                     </td>
                   </tr>

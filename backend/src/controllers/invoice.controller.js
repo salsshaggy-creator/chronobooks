@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const db = require('../config/db');
-const { postInvoiceJournal, postJournalEntry } = require('../services/journal.service');
+const { postInvoiceJournal, postJournalEntry, reverseJournalEntry } = require('../services/journal.service');
 const { httpError, isApprovalRequired, createApprovalRequest } = require('../services/approval.service');
 const inventoryService = require('../services/inventory.service');
 const currencyService = require('../services/currency.service');
@@ -24,6 +24,41 @@ async function listInvoices(req, res) {
     [companyId]
   );
   res.json({ invoices: result.rows });
+}
+
+/** GET /invoices/:id — one invoice with its line items, for the expanded detail view and the CSV download. */
+async function getInvoice(req, res) {
+  const { companyId } = req.user;
+  const { id } = req.params;
+
+  const invRes = await db.query(
+    `SELECT i.*, c.name as customer_name, cc.code as cost_centre_code, cc.name as cost_centre_name
+     FROM invoices i
+     JOIN customers c ON c.id = i.customer_id
+     LEFT JOIN cost_centres cc ON cc.id = i.cost_centre_id
+     WHERE i.id = $1 AND i.company_id = $2`,
+    [id, companyId]
+  );
+  const invoice = invRes.rows[0];
+  if (!invoice) throw httpError(404, 'Invoice not found.');
+
+  const linesRes = await db.query(
+    `SELECT il.*, ii.name as item_name, ii.sku as item_sku
+     FROM invoice_lines il LEFT JOIN inventory_items ii ON ii.id = il.item_id
+     WHERE il.invoice_id = $1`,
+    [id]
+  );
+
+  // Included so the frontend can offer a "download receipt" button per payment without a
+  // second round trip -- receipts are few per invoice, so there's no pagination concern here.
+  const receiptsRes = await db.query(
+    `SELECT r.*, a.name as deposited_to_account_name
+     FROM receipts r LEFT JOIN accounts a ON a.id = r.deposited_to_account_id
+     WHERE r.invoice_id = $1 ORDER BY r.receipt_date ASC`,
+    [id]
+  );
+
+  res.json({ invoice, lines: linesRes.rows, receipts: receiptsRes.rows });
 }
 
 /**
@@ -207,4 +242,80 @@ async function createInvoice(req, res) {
   res.status(201).json(result);
 }
 
-module.exports = { listInvoices, createInvoice, buildInvoice, describeInvoiceRequest };
+/**
+ * Void an invoice: posts a reversing journal entry (Debit Sales/VAT, Credit Accounts
+ * Receivable — the exact opposite of what buildInvoice posted), reverses any stock this
+ * invoice issued (and its Cost of Goods Sold entry), and flags the invoice 'void'. The
+ * original invoice and its lines stay on record for the audit trail — this never deletes
+ * anything, only offsets it.
+ */
+async function voidInvoice(req, res) {
+  const { companyId, sub: userId } = req.user;
+  const { id } = req.params;
+
+  const invRes = await db.query(`SELECT * FROM invoices WHERE id = $1 AND company_id = $2`, [id, companyId]);
+  const invoice = invRes.rows[0];
+  if (!invoice) throw httpError(404, 'Invoice not found.');
+  if (invoice.status === 'void') throw httpError(400, 'This invoice is already void.');
+  if (Number(invoice.paid) > 0) {
+    throw httpError(400, 'This invoice has a payment recorded against it. Void isn’t available for invoices with payments yet — contact support.');
+  }
+
+  const reversalEntryId = await reverseJournalEntry({
+    companyId,
+    originalEntryId: invoice.journal_entry_id,
+    entryDate: new Date().toISOString().slice(0, 10),
+    reference: invoice.invoice_number,
+    description: `Void: Invoice ${invoice.invoice_number}`,
+    sourceType: 'invoice_void',
+    sourceId: id,
+    createdBy: userId,
+  });
+
+  // If this invoice issued stock (item lines), reverse the Cost of Goods Sold entry and
+  // put the stock back, at the exact quantity/cost this invoice originally issued it at
+  // (looked up from the stock_movements this invoice created — not recomputed from
+  // today's average cost, so the reversal is exact regardless of what's happened since).
+  const cogsEntryRes = await db.query(
+    `SELECT id FROM journal_entries WHERE company_id = $1 AND source_type = 'invoice_cogs' AND source_id = $2`,
+    [companyId, id]
+  );
+  if (cogsEntryRes.rows[0]) {
+    await reverseJournalEntry({
+      companyId,
+      originalEntryId: cogsEntryRes.rows[0].id,
+      entryDate: new Date().toISOString().slice(0, 10),
+      reference: invoice.invoice_number,
+      description: `Void: Cost of goods sold — ${invoice.invoice_number}`,
+      sourceType: 'invoice_cogs_void',
+      sourceId: id,
+      createdBy: userId,
+    });
+  }
+
+  const movementsRes = await db.query(
+    `SELECT item_id, quantity, unit_cost FROM stock_movements WHERE company_id = $1 AND source_type = 'invoice' AND source_id = $2`,
+    [companyId, id]
+  );
+  for (const m of movementsRes.rows) {
+    // stock_movements.movement_type is constrained to purchase/sale/adjustment/opening --
+    // a void is logged as an 'adjustment', with source_type/source_id (below) carrying
+    // the "this was a void" context instead.
+    await inventoryService.receiveStock({
+      companyId, itemId: m.item_id, quantity: Math.abs(Number(m.quantity)), unitCost: Number(m.unit_cost),
+      movementType: 'adjustment', reference: invoice.invoice_number, sourceType: 'invoice_void', sourceId: id, journalEntryId: null, createdBy: userId,
+    });
+  }
+
+  await db.query(`UPDATE invoices SET status = 'void' WHERE id = $1 AND company_id = $2`, [id, companyId]);
+
+  await db.query(
+    `INSERT INTO audit_log (id, company_id, user_id, action, entity_type, entity_id, metadata)
+     VALUES ($1,$2,$3,'void','invoice',$4,$5)`,
+    [crypto.randomUUID(), companyId, userId, id, JSON.stringify({ invoiceNumber: invoice.invoice_number, reversalEntryId })]
+  );
+
+  res.json({ ok: true, reversalEntryId });
+}
+
+module.exports = { listInvoices, getInvoice, createInvoice, buildInvoice, describeInvoiceRequest, voidInvoice };

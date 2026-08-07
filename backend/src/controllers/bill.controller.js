@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const db = require('../config/db');
-const { postBillJournal } = require('../services/journal.service');
+const { postBillJournal, reverseJournalEntry } = require('../services/journal.service');
 const { httpError, isApprovalRequired, createApprovalRequest } = require('../services/approval.service');
 const inventoryService = require('../services/inventory.service');
 const currencyService = require('../services/currency.service');
@@ -24,6 +24,39 @@ async function listBills(req, res) {
     [companyId]
   );
   res.json({ bills: result.rows });
+}
+
+/** GET /bills/:id — one bill with its line items and payments, for the expanded detail view and CSV/PDF export. */
+async function getBill(req, res) {
+  const { companyId } = req.user;
+  const { id } = req.params;
+
+  const billRes = await db.query(
+    `SELECT b.*, s.name as supplier_name, cc.code as cost_centre_code, cc.name as cost_centre_name
+     FROM bills b
+     JOIN suppliers s ON s.id = b.supplier_id
+     LEFT JOIN cost_centres cc ON cc.id = b.cost_centre_id
+     WHERE b.id = $1 AND b.company_id = $2`,
+    [id, companyId]
+  );
+  const bill = billRes.rows[0];
+  if (!bill) throw httpError(404, 'Bill not found.');
+
+  const linesRes = await db.query(
+    `SELECT bl.*, ii.name as item_name, ii.sku as item_sku
+     FROM bill_lines bl LEFT JOIN inventory_items ii ON ii.id = bl.item_id
+     WHERE bl.bill_id = $1`,
+    [id]
+  );
+
+  const paymentsRes = await db.query(
+    `SELECT p.*, a.name as paid_from_account_name
+     FROM supplier_payments p LEFT JOIN accounts a ON a.id = p.paid_from_account_id
+     WHERE p.bill_id = $1 ORDER BY p.payment_date ASC`,
+    [id]
+  );
+
+  res.json({ bill, lines: linesRes.rows, payments: paymentsRes.rows });
 }
 
 /**
@@ -166,4 +199,64 @@ async function createBill(req, res) {
   res.status(201).json(result);
 }
 
-module.exports = { listBills, createBill, buildBill, describeBillRequest };
+/**
+ * Void a bill: posts a reversing journal entry (Debit Accounts Payable, Credit
+ * Expense/Inventory — the opposite of what buildBill posted) and, if the bill received
+ * stock, issues that quantity back out again. Same rule as invoices: never deletes the
+ * original, only offsets it.
+ */
+async function voidBill(req, res) {
+  const { companyId, sub: userId } = req.user;
+  const { id } = req.params;
+
+  const billRes = await db.query(`SELECT * FROM bills WHERE id = $1 AND company_id = $2`, [id, companyId]);
+  const bill = billRes.rows[0];
+  if (!bill) throw httpError(404, 'Bill not found.');
+  if (bill.status === 'void') throw httpError(400, 'This bill is already void.');
+  if (Number(bill.paid) > 0) {
+    throw httpError(400, 'This bill has a payment recorded against it. Void isn’t available for bills with payments yet — contact support.');
+  }
+
+  const companyRes = await db.query(`SELECT * FROM companies WHERE id = $1`, [companyId]);
+  const allowNegativeStock = !!companyRes.rows[0]?.allow_negative_stock;
+
+  const reversalEntryId = await reverseJournalEntry({
+    companyId,
+    originalEntryId: bill.journal_entry_id,
+    entryDate: new Date().toISOString().slice(0, 10),
+    reference: bill.bill_number,
+    description: `Void: Bill ${bill.bill_number}`,
+    sourceType: 'bill_void',
+    sourceId: id,
+    createdBy: userId,
+  });
+
+  // If this bill received stock, issue it back out. Unlike an invoice's reversal
+  // (which restores stock at its original cost), this issues at today's average cost —
+  // the same rule any other stock-out follows — and will refuse to take stock negative
+  // unless the company allows it, same as a normal sale would.
+  const movementsRes = await db.query(
+    `SELECT item_id, quantity FROM stock_movements WHERE company_id = $1 AND source_type = 'bill' AND source_id = $2`,
+    [companyId, id]
+  );
+  for (const m of movementsRes.rows) {
+    // Same movement_type constraint as invoice void -- logged as 'adjustment', with
+    // source_type/source_id carrying the "this was a void" context instead.
+    await inventoryService.issueStock({
+      companyId, itemId: m.item_id, quantity: Math.abs(Number(m.quantity)), allowNegative: allowNegativeStock,
+      movementType: 'adjustment', reference: bill.bill_number, sourceType: 'bill_void', sourceId: id, journalEntryId: null, createdBy: userId,
+    });
+  }
+
+  await db.query(`UPDATE bills SET status = 'void' WHERE id = $1 AND company_id = $2`, [id, companyId]);
+
+  await db.query(
+    `INSERT INTO audit_log (id, company_id, user_id, action, entity_type, entity_id, metadata)
+     VALUES ($1,$2,$3,'void','bill',$4,$5)`,
+    [crypto.randomUUID(), companyId, userId, id, JSON.stringify({ billNumber: bill.bill_number, reversalEntryId })]
+  );
+
+  res.json({ ok: true, reversalEntryId });
+}
+
+module.exports = { listBills, getBill, createBill, buildBill, describeBillRequest, voidBill };

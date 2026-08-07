@@ -178,11 +178,11 @@ export default function Quotes() {
           )}
 
           <div style={{ fontSize: 13, color: 'var(--cb-text-secondary)', marginTop: 4 }}>
-            Line items{inventoryEnabled && ' — link a stock item to carry it through on conversion'}
+            Line items{items.length > 0 && ' — pick an item to carry it through on conversion'}
           </div>
           {form.lines.map((line, i) => (
             <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {inventoryEnabled && (
+              {items.length > 0 && (
                 <select value={line.itemId} onChange={(e) => pickItemForLine(i, e.target.value)} style={inputStyle}>
                   <option value="">No stock item (freeform line)</option>
                   {items.map((it) => <option key={it.id} value={it.id}>{it.name}{it.sku ? ` (${it.sku})` : ''}</option>)}

@@ -1,12 +1,12 @@
 const crypto = require('crypto');
 const db = require('../config/db');
-const { postJournalEntry } = require('../services/journal.service');
+const { postJournalEntry, reverseJournalEntry } = require('../services/journal.service');
 
 /** Chart of accounts with each account's current balance — the same numbers Reports uses. */
 async function listAccounts(req, res) {
   const { companyId } = req.user;
   const accountsRes = await db.query(
-    `SELECT id, code, name, type, group_name FROM accounts WHERE company_id = $1 ORDER BY code`,
+    `SELECT id, code, name, type, group_name, parent_account_id FROM accounts WHERE company_id = $1 ORDER BY code`,
     [companyId]
   );
   const balancesRes = await db.query(
@@ -52,7 +52,7 @@ async function getLedger(req, res) {
 async function listJournalEntries(req, res) {
   const { companyId } = req.user;
   const entriesRes = await db.query(
-    `SELECT je.id, je.entry_date, je.reference, je.description, je.source_type, je.created_at,
+    `SELECT je.id, je.entry_date, je.reference, je.description, je.source_type, je.created_at, je.voided_at, je.reversal_of,
             (SELECT COALESCE(SUM(debit),0) FROM journal_lines WHERE journal_entry_id = je.id) as total
      FROM journal_entries je
      WHERE je.company_id = $1
@@ -114,6 +114,69 @@ async function createJournalEntry(req, res) {
   res.status(201).json({ journalEntryId });
 }
 
+// Invoices and bills already have their own dedicated void endpoints (Sales/Purchases),
+// which also reverse stock and flip the invoice/bill's own status — voiding their
+// journal entry here directly would skip both, so this generic path defers to those.
+const NON_GENERIC_VOID_SOURCE_TYPES = ['invoice', 'bill'];
+
+/**
+ * Void any journal entry that doesn't have its own dedicated void flow: manual entries,
+ * bank transactions (deposit/withdrawal/transfer/charge/interest — these ARE journal
+ * entries with no separate table row), expenses, payroll runs, and so on. Posts a
+ * reversing entry and flags the original — never edits or deletes it.
+ */
+async function voidJournalEntry(req, res) {
+  const { companyId, sub: userId } = req.user;
+  const { entryId } = req.params;
+
+  const entryRes = await db.query(`SELECT * FROM journal_entries WHERE id = $1 AND company_id = $2`, [entryId, companyId]);
+  const entry = entryRes.rows[0];
+  if (!entry) return res.status(404).json({ error: 'Journal entry not found.' });
+  if (entry.voided_at) return res.status(400).json({ error: 'This entry has already been voided.' });
+  if (entry.reversal_of) return res.status(400).json({ error: 'This entry is itself a reversal and can’t be voided again.' });
+  if (NON_GENERIC_VOID_SOURCE_TYPES.includes(entry.source_type)) {
+    return res.status(400).json({
+      error: `Void this from ${entry.source_type === 'invoice' ? 'Sales' : 'Purchases'} instead, so stock and payment status stay in sync.`,
+    });
+  }
+
+  const reversalEntryId = await reverseJournalEntry({
+    companyId,
+    originalEntryId: entryId,
+    entryDate: new Date().toISOString().slice(0, 10),
+    reference: entry.reference,
+    description: `Void: ${entry.description || entry.reference || entryId}`,
+    sourceType: `${entry.source_type}_void`,
+    sourceId: entry.source_id,
+    createdBy: userId,
+  });
+
+  await db.query(
+    `INSERT INTO audit_log (id, company_id, user_id, action, entity_type, entity_id, metadata)
+     VALUES ($1,$2,$3,'void','journal_entry',$4,$5)`,
+    [crypto.randomUUID(), companyId, userId, entryId, JSON.stringify({ reversalEntryId })]
+  );
+
+  res.json({ ok: true, reversalEntryId });
+}
+
+/**
+ * Cash + Bank Accounts group accounts (parents and any sub-accounts, e.g. a "Momo"
+ * account nested under "Cash") -- the set of accounts money can plausibly be "paid
+ * from". Used by pickers like Expenses' Per Diem "Paid from" dropdown so a sub-account
+ * shows up there the moment it's created, instead of that list staying hardcoded.
+ */
+async function listPayableFromAccounts(req, res) {
+  const { companyId } = req.user;
+  const result = await db.query(
+    `SELECT id, code, name, group_name, parent_account_id FROM accounts
+     WHERE company_id = $1 AND group_name IN ('Cash', 'Bank Accounts')
+     ORDER BY group_name, code`,
+    [companyId]
+  );
+  res.json({ accounts: result.rows });
+}
+
 const ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'income', 'expense'];
 
 /**
@@ -124,10 +187,23 @@ const ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'income', 'expense'];
  */
 async function createAccount(req, res) {
   const { companyId } = req.user;
-  const { code, name, type, groupName } = req.body;
-  if (!code || !name || !type || !groupName) {
-    return res.status(400).json({ error: 'Code, name, type, and group are required.' });
+  const { code, name, parentAccountId } = req.body;
+  let { type, groupName } = req.body;
+  if (!code || !name) return res.status(400).json({ error: 'Code and name are required.' });
+
+  // A sub-account (e.g. "Momo" under "Cash") always shares its parent's classification --
+  // it's the same kind of money, just tracked separately -- so type/group are inherited
+  // rather than re-entered, and can't drift from the parent's.
+  let parentAccount = null;
+  if (parentAccountId) {
+    const parentRes = await db.query(`SELECT * FROM accounts WHERE id = $1 AND company_id = $2`, [parentAccountId, companyId]);
+    parentAccount = parentRes.rows[0];
+    if (!parentAccount) return res.status(400).json({ error: 'Parent account not found.' });
+    type = parentAccount.type;
+    groupName = parentAccount.group_name;
   }
+
+  if (!type || !groupName) return res.status(400).json({ error: 'Type and group are required (or pick a parent account to inherit them from).' });
   if (!ACCOUNT_TYPES.includes(type)) {
     return res.status(400).json({ error: `Type must be one of: ${ACCOUNT_TYPES.join(', ')}.` });
   }
@@ -136,10 +212,10 @@ async function createAccount(req, res) {
   if (existing.rows[0]) return res.status(409).json({ error: `Account code ${code} already exists.` });
 
   const result = await db.query(
-    `INSERT INTO accounts (company_id, code, name, type, group_name, is_system) VALUES ($1,$2,$3,$4,$5,0) RETURNING id`,
-    [companyId, code, name, type, groupName]
+    `INSERT INTO accounts (company_id, code, name, type, group_name, is_system, parent_account_id) VALUES ($1,$2,$3,$4,$5,0,$6) RETURNING id`,
+    [companyId, code, name, type, groupName, parentAccount ? parentAccount.id : null]
   );
-  res.status(201).json({ id: result.rows[0].id, code, name, type, groupName });
+  res.status(201).json({ id: result.rows[0].id, code, name, type, groupName, parentAccountId: parentAccount ? parentAccount.id : null });
 }
 
 /** Rename an account or move it to a different group. Code and type are fixed once created — too much else keys off them. */
@@ -160,6 +236,6 @@ async function updateAccount(req, res) {
 }
 
 module.exports = {
-  listAccounts, getLedger, listJournalEntries, getJournalEntryLines, createJournalEntry,
+  listAccounts, listPayableFromAccounts, getLedger, listJournalEntries, getJournalEntryLines, createJournalEntry, voidJournalEntry,
   createAccount, updateAccount,
 };

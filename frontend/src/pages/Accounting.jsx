@@ -116,6 +116,8 @@ function JournalEntries({ accounts, canPost }) {
   const [form, setForm] = useState({ entryDate: new Date().toISOString().slice(0, 10), reference: '', description: '', lines: [emptyLine(), emptyLine()] });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [voidingId, setVoidingId] = useState(null);
+  const [voidError, setVoidError] = useState({});
 
   function load() { api.listJournalEntries().then((r) => setEntries(r.entries)).catch((err) => setError(err.message)); }
   useEffect(load, []);
@@ -125,6 +127,19 @@ function JournalEntries({ accounts, canPost }) {
     const r = await api.getJournalEntry(entryId);
     setExpandedLines(r.lines);
     setExpanded(entryId);
+  }
+
+  async function handleVoidEntry(entryId) {
+    setVoidingId(entryId);
+    setVoidError((m) => ({ ...m, [entryId]: '' }));
+    try {
+      await api.voidJournalEntry(entryId);
+      load();
+    } catch (err) {
+      setVoidError((m) => ({ ...m, [entryId]: err.message }));
+    } finally {
+      setVoidingId(null);
+    }
   }
 
   function updateLine(i, field, value) {
@@ -210,7 +225,11 @@ function JournalEntries({ accounts, canPost }) {
                 <tr onClick={() => toggleExpand(e.id)} style={{ borderTop: '1px solid var(--cb-border)', cursor: 'pointer' }}>
                   <td style={tdStyle}>{e.entry_date}</td>
                   <td style={tdStyle}>{e.description}</td>
-                  <td style={tdStyle}><span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'var(--cb-primary-50)', color: 'var(--cb-primary-800)' }}>{e.source_type}</span></td>
+                  <td style={tdStyle}>
+                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'var(--cb-primary-50)', color: 'var(--cb-primary-800)' }}>{e.source_type}</span>
+                    {e.voided_at && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: 'var(--cb-danger)' }}>VOID</span>}
+                    {e.reversal_of && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: 'var(--cb-text-secondary)' }}>REVERSAL</span>}
+                  </td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{currency(e.total)}</td>
                 </tr>
                 {expanded === e.id && (
@@ -222,6 +241,20 @@ function JournalEntries({ accounts, canPost }) {
                           <span>{l.debit ? `Dr ${currency(l.debit)}` : `Cr ${currency(l.credit)}`}</span>
                         </div>
                       ))}
+                      {canPost && !e.voided_at && !e.reversal_of && (
+                        ['invoice', 'bill'].includes(e.source_type) ? (
+                          <div style={{ marginTop: 8, fontSize: 11, color: 'var(--cb-text-secondary)' }}>
+                            Void this from {e.source_type === 'invoice' ? 'Sales' : 'Purchases'} instead, so stock and payment status stay in sync.
+                          </div>
+                        ) : (
+                          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <button type="button" onClick={() => handleVoidEntry(e.id)} disabled={voidingId === e.id} style={{ ...ghostButtonStyle, color: 'var(--cb-danger)' }}>
+                              {voidingId === e.id ? 'Voiding…' : 'Void this entry'}
+                            </button>
+                            {voidError[e.id] && <span style={{ color: 'var(--cb-danger)', fontSize: 11 }}>{voidError[e.id]}</span>}
+                          </div>
+                        )
+                      )}
                     </td>
                   </tr>
                 )}

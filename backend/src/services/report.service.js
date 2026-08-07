@@ -181,4 +181,86 @@ async function costCentreBreakdown(companyId, fromDate, toDate) {
   return { fromDate, toDate, centres, unassigned, totalIncome, totalExpenses, totalNet: totalIncome - totalExpenses };
 }
 
-module.exports = { profitAndLoss, balanceSheet, trialBalance, costCentreBreakdown };
+const round2 = (n) => Math.round(Number(n) * 100) / 100;
+
+const CASH_FLOW_LABELS = {
+  receipt: 'Customer payments received',
+  supplier_payment: 'Paid to suppliers',
+  expense: 'Operating expenses paid',
+  bank_charge: 'Bank charges',
+  interest: 'Interest earned',
+  deposit: 'Cash deposited to bank',
+  withdrawal: 'Cash withdrawn from bank',
+  transfer: 'Transfer between bank accounts',
+  manual: 'Manual journal entries',
+  fixed_asset: 'Fixed asset purchases',
+  fixed_asset_disposal: 'Fixed asset disposal proceeds',
+  opening_balance: 'Opening capital',
+};
+
+function cashFlowLabel(sourceType) {
+  const isVoid = sourceType.endsWith('_void');
+  const base = isVoid ? sourceType.slice(0, -'_void'.length) : sourceType;
+  const label = CASH_FLOW_LABELS[base] || base.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  return isVoid ? `${label} (voided)` : label;
+}
+
+/**
+ * Cash Flow: how much actual cash moved, not just what was earned/spent on paper (that's
+ * the P&L). Built the same way as the other reports — a view over journal_lines, this
+ * time filtered to only the lines that hit a Cash or Bank Accounts account, since that's
+ * the only thing "cash flow" means. Movements are grouped by source_type into the three
+ * standard buckets: Investing is fixed-asset purchases/disposals, Financing is opening
+ * capital, and everything else that touches cash directly falls under Operating —
+ * transfers between the company's own cash and bank accounts always net to zero here
+ * automatically (one line debits, the other credits, both inside the same Cash+Bank
+ * total), which is correct: moving your own money between your own accounts isn't a
+ * cash flow.
+ */
+async function cashFlow(companyId, fromDate, toDate) {
+  const movementRes = await db.query(
+    `SELECT je.source_type, COALESCE(SUM(jl.debit),0) as debit, COALESCE(SUM(jl.credit),0) as credit
+     FROM journal_lines jl
+     JOIN journal_entries je ON je.id = jl.journal_entry_id
+     JOIN accounts a ON a.id = jl.account_id
+     WHERE je.company_id = $1 AND a.group_name IN ('Cash', 'Bank Accounts')
+       AND je.entry_date >= $2 AND je.entry_date <= $3
+     GROUP BY je.source_type`,
+    [companyId, fromDate, toDate]
+  );
+
+  const buckets = { operating: 0, investing: 0, financing: 0 };
+  const lines = { operating: [], investing: [], financing: [] };
+  for (const row of movementRes.rows) {
+    const net = round2(Number(row.debit) - Number(row.credit));
+    if (Math.abs(net) < 0.005) continue;
+    const base = row.source_type.endsWith('_void') ? row.source_type.slice(0, -'_void'.length) : row.source_type;
+    const bucket = base.startsWith('fixed_asset') ? 'investing' : base === 'opening_balance' ? 'financing' : 'operating';
+    buckets[bucket] += net;
+    lines[bucket].push({ sourceType: row.source_type, label: cashFlowLabel(row.source_type), amount: net });
+  }
+
+  const closingRes = await db.query(
+    `SELECT COALESCE(SUM(jl.debit),0) as debit, COALESCE(SUM(jl.credit),0) as credit
+     FROM journal_lines jl
+     JOIN journal_entries je ON je.id = jl.journal_entry_id
+     JOIN accounts a ON a.id = jl.account_id
+     WHERE je.company_id = $1 AND a.group_name IN ('Cash', 'Bank Accounts') AND je.entry_date <= $2`,
+    [companyId, toDate]
+  );
+  const closingCash = round2(Number(closingRes.rows[0].debit) - Number(closingRes.rows[0].credit));
+  const netChange = round2(buckets.operating + buckets.investing + buckets.financing);
+  const openingCash = round2(closingCash - netChange);
+
+  return {
+    fromDate, toDate,
+    operating: { total: round2(buckets.operating), lines: lines.operating },
+    investing: { total: round2(buckets.investing), lines: lines.investing },
+    financing: { total: round2(buckets.financing), lines: lines.financing },
+    netChange,
+    openingCash,
+    closingCash,
+  };
+}
+
+module.exports = { profitAndLoss, balanceSheet, trialBalance, costCentreBreakdown, cashFlow };

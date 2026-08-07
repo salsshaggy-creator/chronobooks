@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { ComparisonBar, BreakdownBars } from '../components/ReportBars';
+import { downloadCSV, downloadPDF } from '../utils/export';
 
 const currency = (n) => `GHS ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
-const TABS = ['Profit & Loss', 'Balance Sheet', 'Trial Balance', 'Budget vs Actual', 'Cost Centres'];
+const TABS = ['Profit & Loss', 'Balance Sheet', 'Trial Balance', 'Cash Flow', 'Budget vs Actual', 'Cost Centres'];
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -23,6 +24,7 @@ export default function Reports() {
   const [bvaYear, setBvaYear] = useState(new Date().getFullYear());
   const [bvaMonth, setBvaMonth] = useState(new Date().getMonth() + 1);
   const [cc, setCc] = useState(null);
+  const [cf, setCf] = useState(null);
   const [error, setError] = useState('');
 
   function load() {
@@ -30,11 +32,112 @@ export default function Reports() {
     if (tab === 'Profit & Loss') api.profitAndLoss(from, to).then(setPl).catch((err) => setError(err.message));
     if (tab === 'Balance Sheet') api.balanceSheet(to).then(setBs).catch((err) => setError(err.message));
     if (tab === 'Trial Balance') api.trialBalance(to).then(setTb).catch((err) => setError(err.message));
+    if (tab === 'Cash Flow') api.cashFlow(from, to).then(setCf).catch((err) => setError(err.message));
     if (tab === 'Budget vs Actual') api.getBudgetVsActual(bvaYear, bvaMonth).then(setBva).catch((err) => setError(err.message));
     if (tab === 'Cost Centres') api.costCentreBreakdown(from, to).then(setCc).catch((err) => setError(err.message));
   }
 
   useEffect(load, [tab, bvaYear, bvaMonth]);
+
+  // Builds a { title, subtitle, columns, rows, summary } payload from whichever report is
+  // currently on screen, shared by both the CSV and PDF download buttons -- one place that
+  // knows how to flatten each report's shape, so a new report only needs one new case here.
+  function buildExportPayload() {
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    if (tab === 'Profit & Loss' && pl) {
+      return {
+        title: 'Profit & Loss',
+        subtitle: `${from} to ${to}`,
+        columns: ['Section', 'Category', 'Amount'],
+        rows: [
+          ...pl.income.map((r) => ['Income', r.label, currency(r.amount)]),
+          ...pl.expenses.map((r) => ['Expenses', r.label, currency(r.amount)]),
+        ],
+        summary: [`Total income: ${currency(pl.totalIncome)}`, `Total expenses: ${currency(pl.totalExpenses)}`, `Net ${pl.netProfit >= 0 ? 'profit' : 'loss'}: ${currency(pl.netProfit)}`],
+      };
+    }
+    if (tab === 'Balance Sheet' && bs) {
+      return {
+        title: 'Balance Sheet',
+        subtitle: `As of ${to}`,
+        columns: ['Section', 'Account', 'Amount'],
+        rows: [
+          ...bs.assets.map((r) => ['Assets', r.label, currency(r.amount)]),
+          ...bs.liabilities.map((r) => ['Liabilities', r.label, currency(r.amount)]),
+          ...bs.equity.map((r) => ['Equity', r.label, currency(r.amount)]),
+        ],
+        summary: [`Total assets: ${currency(bs.totalAssets)}`, `Total liabilities: ${currency(bs.totalLiabilities)}`, `Total equity: ${currency(bs.totalEquity)}`, bs.balanced ? 'Balanced' : 'Not balanced'],
+      };
+    }
+    if (tab === 'Trial Balance' && tb) {
+      return {
+        title: 'Trial Balance',
+        subtitle: `As of ${to}`,
+        columns: ['Account', 'Debit', 'Credit'],
+        rows: tb.rows.map((r) => [`${r.code} — ${r.name}`, r.debit ? currency(r.debit) : '', r.credit ? currency(r.credit) : '']),
+        summary: [`Total debit: ${currency(tb.totalDebit)}`, `Total credit: ${currency(tb.totalCredit)}`, tb.balanced ? 'Balanced' : 'Not balanced'],
+      };
+    }
+    if (tab === 'Cash Flow' && cf) {
+      return {
+        title: 'Cash Flow',
+        subtitle: `${cf.fromDate} to ${cf.toDate}`,
+        columns: ['Section', 'Item', 'Amount'],
+        rows: [
+          ...cf.operating.lines.map((l) => ['Operating', l.label, currency(l.amount)]),
+          ...cf.investing.lines.map((l) => ['Investing', l.label, currency(l.amount)]),
+          ...cf.financing.lines.map((l) => ['Financing', l.label, currency(l.amount)]),
+        ],
+        summary: [`Net change in cash: ${currency(cf.netChange)}`, `Opening cash: ${currency(cf.openingCash)}`, `Closing cash: ${currency(cf.closingCash)}`],
+      };
+    }
+    if (tab === 'Budget vs Actual' && bva) {
+      return {
+        title: 'Budget vs Actual',
+        subtitle: `Jan through ${monthNames[bva.throughMonth - 1]} ${bva.year}`,
+        columns: ['Section', 'Category', 'Budget', 'Actual', 'Variance'],
+        rows: [
+          ...bva.income.map((r) => ['Income', r.label, currency(r.budget), currency(r.actual), currency(r.variance)]),
+          ...bva.expenses.map((r) => ['Expenses', r.label, currency(r.budget), currency(r.actual), currency(r.variance)]),
+        ],
+        summary: [`Net planned: ${currency(bva.netBudget)}`, `Net actual: ${currency(bva.netActual)}`],
+      };
+    }
+    if (tab === 'Cost Centres' && cc) {
+      return {
+        title: 'Cost Centres',
+        subtitle: `${from} to ${to}`,
+        columns: ['Cost centre', 'Income', 'Expenses', 'Net'],
+        rows: [
+          ...cc.centres.map((c) => [`${c.code} — ${c.name}`, currency(c.income), currency(c.expenses), currency(c.net)]),
+          ['Unassigned', currency(cc.unassigned.income), currency(cc.unassigned.expenses), currency(cc.unassigned.net)],
+        ],
+        summary: [`Total income: ${currency(cc.totalIncome)}`, `Total expenses: ${currency(cc.totalExpenses)}`, `Total net: ${currency(cc.totalNet)}`],
+      };
+    }
+    return null;
+  }
+
+  function handleDownloadReport(format) {
+    const payload = buildExportPayload();
+    if (!payload) return;
+    const filename = `${payload.title.replace(/[^a-z0-9]+/gi, '-')}-${to}`;
+    if (format === 'pdf') {
+      downloadPDF(`${filename}.pdf`, payload);
+    } else {
+      downloadCSV(`${filename}.csv`, [
+        [payload.title],
+        [payload.subtitle],
+        [],
+        payload.columns,
+        ...payload.rows,
+        [],
+        ...payload.summary.map((s) => [s]),
+      ]);
+    }
+  }
+
+  const canExport = !!buildExportPayload();
 
   return (
     <div style={{ padding: 24 }}>
@@ -64,7 +167,7 @@ export default function Reports() {
       </div>
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 16, fontSize: 13 }}>
-        {(tab === 'Profit & Loss' || tab === 'Cost Centres') && (
+        {(tab === 'Profit & Loss' || tab === 'Cost Centres' || tab === 'Cash Flow') && (
           <>
             <span style={{ color: 'var(--cb-text-secondary)' }}>From</span>
             <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={inputStyle} />
@@ -91,6 +194,12 @@ export default function Reports() {
           </>
         )}
         <button onClick={load} style={buttonStyle}>Run</button>
+        <button onClick={() => handleDownloadReport('csv')} disabled={!canExport} style={{ ...ghostButtonStyle, opacity: canExport ? 1 : 0.5 }} title="Download as CSV (opens in Excel)">
+          Download CSV
+        </button>
+        <button onClick={() => handleDownloadReport('pdf')} disabled={!canExport} style={{ ...ghostButtonStyle, opacity: canExport ? 1 : 0.5 }} title="Download as PDF">
+          Download PDF
+        </button>
       </div>
 
       {error && <div style={{ color: 'var(--cb-danger)', fontSize: 13, marginBottom: 12 }}>{error}</div>}
@@ -200,6 +309,31 @@ export default function Reports() {
           </div>
         </div>
       )}
+      {tab === 'Cash Flow' && cf && (
+        <div style={{ ...cardStyle, maxWidth: 640 }}>
+          <div style={cardTitleStyle}>Cash flow — {cf.fromDate} to {cf.toDate}</div>
+          <div style={{ fontSize: 12, color: 'var(--cb-text-secondary)', marginBottom: 14 }}>
+            How much actual cash moved through your Cash and Bank accounts this period — different from Profit &amp; Loss,
+            which counts income and expenses even before the cash has changed hands.
+          </div>
+
+          <CashFlowSection title="Operating activities" bucket={cf.operating} />
+          <CashFlowSection title="Investing activities" bucket={cf.investing} />
+          <CashFlowSection title="Financing activities" bucket={cf.financing} />
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '8px 0', borderTop: '2px solid var(--cb-border)', marginTop: 6, fontWeight: 700 }}>
+            <span>Net change in cash</span>
+            <span style={{ color: cf.netChange >= 0 ? 'var(--cb-success)' : 'var(--cb-danger)' }}>{currency(cf.netChange)}</span>
+          </div>
+          <Row label="Opening cash" amount={cf.openingCash} />
+          <Row label="Closing cash" amount={cf.closingCash} />
+
+          {cf.operating.lines.length === 0 && cf.investing.lines.length === 0 && cf.financing.lines.length === 0 && (
+            <div style={{ fontSize: 13, color: 'var(--cb-text-secondary)', marginTop: 8 }}>No cash movement in this period.</div>
+          )}
+        </div>
+      )}
+
       {tab === 'Budget vs Actual' && bva && (
         <div style={cardStyle}>
           <div style={cardTitleStyle}>Budget vs Actual — Jan through {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][bva.throughMonth - 1]} {bva.year}</div>
@@ -300,6 +434,19 @@ function BudgetTotalRow({ label, budget, actual }) {
   );
 }
 
+function CashFlowSection({ title, bucket }) {
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 600, color: 'var(--cb-text-secondary)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+        <span>{title}</span>
+        <span style={{ color: bucket.total >= 0 ? 'var(--cb-success)' : 'var(--cb-danger)' }}>{currency(bucket.total)}</span>
+      </div>
+      {bucket.lines.map((l, i) => <Row key={i} label={l.label} amount={l.amount} />)}
+      {bucket.lines.length === 0 && <Empty />}
+    </div>
+  );
+}
+
 function Section({ title, children }) {
   return (
     <div style={{ marginTop: 12 }}>
@@ -330,6 +477,7 @@ function Empty() {
 
 const inputStyle = { padding: '6px 10px', border: '1px solid var(--cb-border)', borderRadius: 8, fontSize: 13 };
 const buttonStyle = { padding: '7px 14px', border: 'none', borderRadius: 8, background: 'var(--cb-primary-400)', color: 'var(--cb-primary-900)', fontWeight: 600, fontSize: 13 };
+const ghostButtonStyle = { padding: '7px 14px', border: '1px solid var(--cb-border)', borderRadius: 8, background: 'transparent', color: 'var(--cb-primary-800)', fontWeight: 600, fontSize: 13 };
 const thStyle = { padding: '6px 8px', fontWeight: 500 };
 const tdStyle = { padding: '6px 8px' };
 const cardStyle = { background: 'var(--cb-surface)', border: '1px solid var(--cb-border)', borderRadius: 'var(--cb-radius)', padding: 20 };

@@ -1,4 +1,4 @@
-const { profitAndLoss, balanceSheet, trialBalance, costCentreBreakdown } = require('../services/report.service');
+const { profitAndLoss, balanceSheet, trialBalance, costCentreBreakdown, cashFlow } = require('../services/report.service');
 
 function defaultFromDate() {
   const d = new Date();
@@ -34,4 +34,11 @@ async function getCostCentreBreakdown(req, res) {
   res.json(await costCentreBreakdown(companyId, from, to));
 }
 
-module.exports = { getProfitAndLoss, getBalanceSheet, getTrialBalance, getCostCentreBreakdown };
+async function getCashFlow(req, res) {
+  const { companyId } = req.user;
+  const from = req.query.from || defaultFromDate();
+  const to = req.query.to || today();
+  res.json(await cashFlow(companyId, from, to));
+}
+
+module.exports = { getProfitAndLoss, getBalanceSheet, getTrialBalance, getCostCentreBreakdown, getCashFlow };

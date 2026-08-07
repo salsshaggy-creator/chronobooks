@@ -19,6 +19,7 @@ export default function Inventory() {
 
   const [historyFor, setHistoryFor] = useState(null);
   const [movements, setMovements] = useState([]);
+  const [categoryFilter, setCategoryFilter] = useState('');
 
   function load() {
     api.listInventoryItems().then((r) => setItems(r.items)).catch((err) => setError(err.message));
@@ -28,6 +29,12 @@ export default function Inventory() {
 
   const totalValue = items.reduce((sum, i) => sum + Number(i.stockValue || 0), 0);
   const lowStockCount = items.filter((i) => i.lowStock).length;
+  // Categories are still free text (no separate table to manage) -- but every category
+  // already typed in shows up as a pick-from-list option (via the datalist below) and as
+  // a filter here, so a second item reuses "Spices" instead of accidentally creating a
+  // near-duplicate like "spice" or "Spices ".
+  const categories = [...new Set(items.map((i) => i.category).filter(Boolean))].sort();
+  const visibleItems = categoryFilter ? items.filter((i) => i.category === categoryFilter) : items;
 
   function startEdit(item) {
     setEditingId(item.id);
@@ -129,7 +136,13 @@ export default function Inventory() {
           <label style={labelStyle}>Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inputStyle} required /></label>
           <label style={labelStyle}>SKU (optional)<input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} style={inputStyle} /></label>
           <label style={labelStyle}>Unit<input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} style={inputStyle} placeholder="e.g. pcs, kg, box" /></label>
-          <label style={labelStyle}>Category (optional)<input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} style={inputStyle} /></label>
+          <label style={labelStyle}>
+            Category (optional)
+            <input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} style={inputStyle} list="category-options" placeholder="e.g. Spices, Grains and Cereals" />
+            <datalist id="category-options">
+              {categories.map((c) => <option key={c} value={c} />)}
+            </datalist>
+          </label>
           <label style={labelStyle}>Sale price (optional)<input type="number" min="0" step="0.01" value={form.salePrice} onChange={(e) => setForm({ ...form, salePrice: e.target.value })} style={inputStyle} /></label>
           <label style={labelStyle}>Reorder level<input type="number" min="0" step="0.01" value={form.reorderLevel} onChange={(e) => setForm({ ...form, reorderLevel: e.target.value })} style={inputStyle} /></label>
           {!editingId && (
@@ -149,6 +162,15 @@ export default function Inventory() {
       {notice && <div style={{ color: 'var(--cb-primary-800)', fontSize: 13, marginBottom: 12, background: 'var(--cb-primary-50)', borderRadius: 8, padding: '8px 10px' }}>{notice}</div>}
 
       <div style={cardStyle}>
+        {categories.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 13 }}>
+            <span style={{ color: 'var(--cb-text-secondary)' }}>Category</span>
+            <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} style={{ ...inputStyle, width: 220, marginTop: 0 }}>
+              <option value="">All categories</option>
+              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        )}
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ textAlign: 'left', color: 'var(--cb-text-secondary)' }}>
@@ -162,7 +184,7 @@ export default function Inventory() {
             </tr>
           </thead>
           <tbody>
-            {items.map((item) => (
+            {visibleItems.map((item) => (
               <>
                 <tr key={item.id} style={{ borderTop: '1px solid var(--cb-border)' }}>
                   <td style={tdStyle}>

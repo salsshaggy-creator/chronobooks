@@ -21,9 +21,11 @@ export default function FixedAssets() {
 
   const [historyFor, setHistoryFor] = useState(null);
   const [movements, setMovements] = useState([]);
+  const [payableAccounts, setPayableAccounts] = useState([]);
 
   function load() {
     api.listFixedAssets().then((r) => setAssets(r.assets)).catch((err) => setError(err.message));
+    api.listPayableFromAccounts().then((r) => setPayableAccounts(r.accounts)).catch(() => {});
   }
 
   useEffect(load, []);
@@ -120,11 +122,14 @@ export default function FixedAssets() {
           <div style={statLabelStyle}>Monthly depreciation</div>
           <div style={statValueStyle}>{currency(totalMonthlyDep)}</div>
         </div>
-        <div style={{ ...statCardStyle, display: 'flex', flexDirection: 'column', gap: 6, minWidth: 260 }}>
+        <div style={{ ...statCardStyle, display: 'flex', flexDirection: 'column', gap: 6, minWidth: 280 }}>
           <div style={statLabelStyle}>Run depreciation</div>
           <div style={{ display: 'flex', gap: 6 }}>
             <input type="date" value={depAsOf} onChange={(e) => setDepAsOf(e.target.value)} style={{ ...inputStyle, marginTop: 0 }} />
             <button type="button" onClick={handleRunDepreciation} disabled={depRunning} style={{ ...buttonStyle, padding: '8px 12px' }}>{depRunning ? 'Running…' : 'Run'}</button>
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--cb-text-secondary)', lineHeight: 1.4 }}>
+            Posts straight-line depreciation directly to the ledger for every active asset (Debit Depreciation Expense, Credit Accumulated Depreciation) — nothing to post manually via Journal Entries.
           </div>
         </div>
       </div>
@@ -138,7 +143,13 @@ export default function FixedAssets() {
           <label style={labelStyle}>Purchase cost<input type="number" min="0" step="0.01" value={form.purchaseCost} onChange={(e) => setForm({ ...form, purchaseCost: e.target.value })} style={inputStyle} required /></label>
           <label style={labelStyle}>Salvage value<input type="number" min="0" step="0.01" value={form.salvageValue} onChange={(e) => setForm({ ...form, salvageValue: e.target.value })} style={inputStyle} /></label>
           <label style={labelStyle}>Useful life (months)<input type="number" min="1" step="1" value={form.usefulLifeMonths} onChange={(e) => setForm({ ...form, usefulLifeMonths: e.target.value })} style={inputStyle} required /></label>
-          <label style={labelStyle}>Paid from (account code)<input value={form.paidFromAccountCode} onChange={(e) => setForm({ ...form, paidFromAccountCode: e.target.value })} style={inputStyle} required /></label>
+          <label style={labelStyle}>
+            Paid from
+            <select value={form.paidFromAccountCode} onChange={(e) => setForm({ ...form, paidFromAccountCode: e.target.value })} style={inputStyle} required>
+              {payableAccounts.length === 0 && <option value={form.paidFromAccountCode}>Loading…</option>}
+              {payableAccounts.map((acc) => <option key={acc.id} value={acc.code}>{acc.name} ({acc.group_name})</option>)}
+            </select>
+          </label>
           <div style={{ display: 'flex', gap: 8 }}>
             <button type="submit" disabled={saving} style={buttonStyle}>{saving ? 'Saving…' : 'Register asset'}</button>
             <button type="button" onClick={() => setShowForm(false)} style={ghostButtonStyle}>Cancel</button>
@@ -192,7 +203,12 @@ export default function FixedAssets() {
                       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', background: 'var(--cb-bg)', borderRadius: 10, padding: 12 }}>
                         <label style={labelStyle}>Disposal date<input type="date" value={disposeForm.disposalDate} onChange={(e) => setDisposeForm({ ...disposeForm, disposalDate: e.target.value })} style={{ ...inputStyle, width: 140 }} /></label>
                         <label style={labelStyle}>Proceeds<input type="number" min="0" step="0.01" value={disposeForm.proceeds} onChange={(e) => setDisposeForm({ ...disposeForm, proceeds: e.target.value })} style={{ ...inputStyle, width: 110 }} /></label>
-                        <label style={labelStyle}>Deposited to (account code)<input value={disposeForm.depositToAccountCode} onChange={(e) => setDisposeForm({ ...disposeForm, depositToAccountCode: e.target.value })} style={{ ...inputStyle, width: 110 }} /></label>
+                        <label style={labelStyle}>
+                          Deposited to
+                          <select value={disposeForm.depositToAccountCode} onChange={(e) => setDisposeForm({ ...disposeForm, depositToAccountCode: e.target.value })} style={{ ...inputStyle, width: 160 }}>
+                            {payableAccounts.map((acc) => <option key={acc.id} value={acc.code}>{acc.name}</option>)}
+                          </select>
+                        </label>
                         <button type="button" onClick={() => confirmDispose(a)} style={{ ...buttonStyle, padding: '9px 14px' }}>Confirm disposal</button>
                         <button type="button" onClick={() => setDisposingId(null)} style={ghostButtonStyle}>Cancel</button>
                       </div>

@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api/client';
 import Attachments from '../components/Attachments';
+import { downloadCSV, downloadPDF } from '../utils/export';
 
 const currency = (n) => `GHS ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
 const emptyLine = () => ({ description: '', quantity: 1, unitPrice: '', itemId: '' });
@@ -35,11 +36,33 @@ export default function Sales() {
   const [receiptAmount, setReceiptAmount] = useState('');
   const [receiptError, setReceiptError] = useState('');
   const [expandedId, setExpandedId] = useState(null);
+  const [invoiceDetail, setInvoiceDetail] = useState({}); // invoiceId -> { invoice, lines }, fetched lazily on expand
+  const [loadingDetailId, setLoadingDetailId] = useState(null);
+  const [downloadingId, setDownloadingId] = useState(null);
 
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const [newCustomer, setNewCustomer] = useState({ name: '', email: '', phone: '' });
   const [newCustomerError, setNewCustomerError] = useState('');
   const [newCustomerSaving, setNewCustomerSaving] = useState(false);
+
+  const [voidConfirmId, setVoidConfirmId] = useState(null);
+  const [voidingId, setVoidingId] = useState(null);
+  const [voidError, setVoidError] = useState({});
+
+  const [editCustomerOpen, setEditCustomerOpen] = useState(false);
+  const [editCustomer, setEditCustomer] = useState({ name: '', email: '', phone: '' });
+  const [editCustomerError, setEditCustomerError] = useState('');
+  const [editCustomerSaving, setEditCustomerSaving] = useState(false);
+  const [deleteCustomerConfirm, setDeleteCustomerConfirm] = useState(false);
+  const [deleteCustomerError, setDeleteCustomerError] = useState('');
+  const [deleteCustomerSaving, setDeleteCustomerSaving] = useState(false);
+
+  const [statementOpen, setStatementOpen] = useState(false);
+  const [statementFrom, setStatementFrom] = useState('');
+  const [statementTo, setStatementTo] = useState('');
+  const [statementData, setStatementData] = useState(null);
+  const [statementLoading, setStatementLoading] = useState(false);
+  const [statementError, setStatementError] = useState('');
 
   function load() {
     api.listCustomers().then((r) => {
@@ -124,6 +147,111 @@ export default function Sales() {
     }
   }
 
+  const selectedCustomer = customers.find((c) => c.id === form.customerId);
+
+  function openEditCustomer() {
+    if (!selectedCustomer) return;
+    setEditCustomer({ name: selectedCustomer.name || '', email: selectedCustomer.email || '', phone: selectedCustomer.phone || '' });
+    setEditCustomerError('');
+    setEditCustomerOpen(true);
+    setDeleteCustomerConfirm(false);
+  }
+
+  async function handleUpdateCustomer(e) {
+    e.preventDefault();
+    setEditCustomerError('');
+    if (!editCustomer.name.trim()) { setEditCustomerError('Customer name is required.'); return; }
+    setEditCustomerSaving(true);
+    try {
+      await api.updateCustomer(form.customerId, {
+        name: editCustomer.name.trim(),
+        email: editCustomer.email || undefined,
+        phone: editCustomer.phone || undefined,
+      });
+      setEditCustomerOpen(false);
+      load();
+    } catch (err) {
+      setEditCustomerError(err.message);
+    } finally {
+      setEditCustomerSaving(false);
+    }
+  }
+
+  async function handleDeleteCustomer() {
+    setDeleteCustomerError('');
+    setDeleteCustomerSaving(true);
+    try {
+      await api.deleteCustomer(form.customerId);
+      setDeleteCustomerConfirm(false);
+      setForm((f) => ({ ...f, customerId: '' }));
+      load();
+    } catch (err) {
+      setDeleteCustomerError(err.message);
+    } finally {
+      setDeleteCustomerSaving(false);
+    }
+  }
+
+  // Fetches and shows the selected customer's statement (their receivable ledger: every
+  // invoice and every receipt, running balance). Re-fetches whenever the date range changes.
+  async function openStatement() {
+    if (!selectedCustomer) return;
+    setStatementOpen(true);
+    setStatementError('');
+    setStatementLoading(true);
+    try {
+      const data = await api.getCustomerStatement(form.customerId, { from: statementFrom, to: statementTo });
+      setStatementData(data);
+    } catch (err) {
+      setStatementError(err.message);
+    } finally {
+      setStatementLoading(false);
+    }
+  }
+
+  function handleDownloadStatement(format) {
+    if (!statementData || !selectedCustomer) return;
+    const rangeLabel = statementFrom || statementTo ? `${statementFrom || 'start'} to ${statementTo || 'today'}` : 'Full history';
+    const columns = ['Date', 'Description', 'Debit', 'Credit', 'Balance'];
+    const rows = statementData.transactions.map((t) => [t.date, t.description, t.debit ? currency(t.debit) : '', t.credit ? currency(t.credit) : '', currency(t.balance)]);
+    const filename = `Statement-${selectedCustomer.name.replace(/[^a-z0-9]+/gi, '-')}`;
+    if (format === 'pdf') {
+      downloadPDF(`${filename}.pdf`, {
+        title: 'Customer Statement',
+        subtitle: selectedCustomer.name,
+        meta: [rangeLabel, `Opening balance: ${currency(statementData.openingBalance)}`],
+        columns,
+        rows,
+        summary: [`Closing balance: ${currency(statementData.closingBalance)}`],
+      });
+    } else {
+      downloadCSV(`${filename}.csv`, [
+        ['Statement for', selectedCustomer.name],
+        ['Period', rangeLabel],
+        ['Opening balance', statementData.openingBalance],
+        [],
+        columns,
+        ...statementData.transactions.map((t) => [t.date, t.description, t.debit || '', t.credit || '', t.balance]),
+        [],
+        ['Closing balance', statementData.closingBalance],
+      ]);
+    }
+  }
+
+  async function handleVoidInvoice(id) {
+    setVoidingId(id);
+    setVoidError((e) => ({ ...e, [id]: '' }));
+    try {
+      await api.voidInvoice(id);
+      setVoidConfirmId(null);
+      load();
+    } catch (err) {
+      setVoidError((e) => ({ ...e, [id]: err.message }));
+    } finally {
+      setVoidingId(null);
+    }
+  }
+
   async function handleReceipt(invoiceId) {
     setReceiptError('');
     setNotice('');
@@ -138,9 +266,106 @@ export default function Sales() {
       setReceiptFor(null);
       setReceiptAmount('');
       if (result.pendingApproval) setNotice(result.message);
+      // Drop the cached detail so re-expanding this invoice re-fetches it with the new receipt.
+      setInvoiceDetail((m) => { const n = { ...m }; delete n[invoiceId]; return n; });
       load();
     } catch (err) {
       setReceiptError(err.message);
+    }
+  }
+
+  // Fetches an invoice's line items once and caches them by id -- shared by the expanded
+  // detail row and the CSV download so neither refetches what the other already has.
+  async function fetchInvoiceDetail(id) {
+    if (invoiceDetail[id]) return invoiceDetail[id];
+    const detail = await api.getInvoice(id);
+    setInvoiceDetail((m) => ({ ...m, [id]: detail }));
+    return detail;
+  }
+
+  async function toggleExpand(id) {
+    if (expandedId === id) { setExpandedId(null); return; }
+    setExpandedId(id);
+    if (!invoiceDetail[id]) {
+      setLoadingDetailId(id);
+      try { await fetchInvoiceDetail(id); } catch (err) { setError(err.message); } finally { setLoadingDetailId(null); }
+    }
+  }
+
+  // Downloads an invoice as CSV (opens directly in Excel/Sheets) or PDF -- both built entirely
+  // client-side from the same cached detail fetch, so neither format needs a server round trip.
+  async function handleDownloadInvoice(inv, format) {
+    setDownloadingId(inv.id);
+    setError('');
+    try {
+      const detail = await fetchInvoiceDetail(inv.id);
+      const outstanding = Number(detail.invoice.total) - Number(detail.invoice.paid);
+      const columns = ['Description', 'Quantity', 'Unit Price', 'Line Total'];
+      const lineRows = detail.lines.map((l) => [l.description, l.quantity, currency(l.unit_price), currency(l.line_total)]);
+      if (format === 'pdf') {
+        downloadPDF(`${detail.invoice.invoice_number}.pdf`, {
+          title: 'Invoice',
+          subtitle: detail.invoice.invoice_number,
+          meta: [
+            `Customer: ${detail.invoice.customer_name}`,
+            `Date: ${detail.invoice.invoice_date}${detail.invoice.due_date ? `  ·  Due: ${detail.invoice.due_date}` : ''}`,
+            `Status: ${detail.invoice.status}`,
+          ],
+          columns,
+          rows: lineRows,
+          summary: [
+            `Total: ${currency(detail.invoice.total)}`,
+            `Paid: ${currency(detail.invoice.paid)}`,
+            `Outstanding: ${currency(outstanding)}`,
+          ],
+        });
+      } else {
+        downloadCSV(`${detail.invoice.invoice_number}.csv`, [
+          ['Invoice', detail.invoice.invoice_number],
+          ['Customer', detail.invoice.customer_name],
+          ['Date', detail.invoice.invoice_date],
+          ['Due date', detail.invoice.due_date || ''],
+          ['Status', detail.invoice.status],
+          ['Total', detail.invoice.total],
+          ['Paid', detail.invoice.paid],
+          ['Outstanding', outstanding],
+          [],
+          columns,
+          ...detail.lines.map((l) => [l.description, l.quantity, l.unit_price, l.line_total]),
+        ]);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
+  // Downloads a receipt as CSV or PDF -- receipts are simple enough (one payment against one
+  // invoice) that no detail fetch is needed; everything is already in the invoice's payload.
+  function handleDownloadReceipt(inv, receipt, format) {
+    const filename = `Receipt-${receipt.id}-${inv.invoice_number}`;
+    const meta = [
+      `Invoice: ${inv.invoice_number}`,
+      `Customer: ${inv.customer_name}`,
+      `Date: ${receipt.receipt_date}`,
+      `Method: ${receipt.payment_method || ''}`,
+    ];
+    if (format === 'pdf') {
+      downloadPDF(`${filename}.pdf`, {
+        title: 'Receipt',
+        subtitle: `Payment received for ${inv.invoice_number}`,
+        meta,
+        summary: [`Amount received: ${currency(receipt.amount)}`],
+      });
+    } else {
+      downloadCSV(`${filename}.csv`, [
+        ['Receipt for invoice', inv.invoice_number],
+        ['Customer', inv.customer_name],
+        ['Date', receipt.receipt_date],
+        ['Method', receipt.payment_method || ''],
+        ['Amount received', receipt.amount],
+      ]);
     }
   }
 
@@ -169,13 +394,133 @@ export default function Sales() {
           </select>
         </label>
 
-        <button
-          type="button"
-          onClick={() => setNewCustomerOpen(true)}
-          style={{ ...ghostButtonStyle, alignSelf: 'flex-start' }}
-        >
-          + Add new customer
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => setNewCustomerOpen(true)}
+            style={ghostButtonStyle}
+          >
+            + Add new customer
+          </button>
+          {selectedCustomer && (
+            <>
+              <button type="button" onClick={openEditCustomer} style={ghostButtonStyle}>
+                ✎ Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => { setDeleteCustomerConfirm(true); setEditCustomerOpen(false); setDeleteCustomerError(''); }}
+                style={{ ...ghostButtonStyle, color: 'var(--cb-danger)' }}
+              >
+                🗑 Delete
+              </button>
+              <button type="button" onClick={openStatement} style={ghostButtonStyle}>
+                📄 Statement
+              </button>
+            </>
+          )}
+        </div>
+
+        {statementOpen && selectedCustomer && (
+          <div style={{ border: '1px solid var(--cb-border)', borderRadius: 8, padding: 12, background: 'var(--cb-bg)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600 }}>Statement — {selectedCustomer.name}</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <label style={{ ...labelStyle, flex: 1 }}>
+                From
+                <input type="date" value={statementFrom} onChange={(e) => setStatementFrom(e.target.value)} style={inputStyle} />
+              </label>
+              <label style={{ ...labelStyle, flex: 1 }}>
+                To
+                <input type="date" value={statementTo} onChange={(e) => setStatementTo(e.target.value)} style={inputStyle} />
+              </label>
+            </div>
+            <button type="button" onClick={openStatement} disabled={statementLoading} style={{ ...buttonStyle, marginTop: 0 }}>
+              {statementLoading ? 'Loading…' : 'Refresh'}
+            </button>
+            {statementError && <div style={{ color: 'var(--cb-danger)', fontSize: 12.5 }}>{statementError}</div>}
+            {statementData && (
+              <>
+                <div style={{ fontSize: 12, color: 'var(--cb-text-secondary)' }}>Opening balance: {currency(statementData.openingBalance)}</div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left', color: 'var(--cb-text-secondary)' }}>
+                      <th style={{ padding: '4px 6px' }}>Date</th>
+                      <th style={{ padding: '4px 6px' }}>Description</th>
+                      <th style={{ padding: '4px 6px', textAlign: 'right' }}>Debit</th>
+                      <th style={{ padding: '4px 6px', textAlign: 'right' }}>Credit</th>
+                      <th style={{ padding: '4px 6px', textAlign: 'right' }}>Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {statementData.transactions.map((t, i) => (
+                      <tr key={i} style={{ borderTop: '1px solid var(--cb-border)' }}>
+                        <td style={{ padding: '4px 6px' }}>{t.date}</td>
+                        <td style={{ padding: '4px 6px' }}>{t.description}</td>
+                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>{t.debit ? currency(t.debit) : ''}</td>
+                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>{t.credit ? currency(t.credit) : ''}</td>
+                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>{currency(t.balance)}</td>
+                      </tr>
+                    ))}
+                    {statementData.transactions.length === 0 && (
+                      <tr><td colSpan={5} style={{ padding: '8px 6px', color: 'var(--cb-text-secondary)' }}>No activity in this period.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+                <div style={{ fontSize: 12.5, fontWeight: 600 }}>Closing balance: {currency(statementData.closingBalance)}</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" onClick={() => handleDownloadStatement('csv')} style={{ ...ghostButtonStyle, flex: 1 }}>Download CSV</button>
+                  <button type="button" onClick={() => handleDownloadStatement('pdf')} style={{ ...ghostButtonStyle, flex: 1 }}>Download PDF</button>
+                </div>
+              </>
+            )}
+            <button type="button" onClick={() => setStatementOpen(false)} style={ghostButtonStyle}>Close</button>
+          </div>
+        )}
+
+        {deleteCustomerConfirm && selectedCustomer && (
+          <div style={{ border: '1px solid var(--cb-danger)', borderRadius: 8, padding: 12, background: 'var(--cb-bg)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 12.5 }}>
+              Delete <strong>{selectedCustomer.name}</strong>? This can’t be undone.
+              {' '}Customers with invoices on record can’t be deleted — edit their details instead.
+            </div>
+            {deleteCustomerError && <div style={{ color: 'var(--cb-danger)', fontSize: 12.5 }}>{deleteCustomerError}</div>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" onClick={handleDeleteCustomer} disabled={deleteCustomerSaving} style={{ ...buttonStyle, marginTop: 0, flex: 1, background: 'var(--cb-danger)', color: '#fff' }}>
+                {deleteCustomerSaving ? 'Deleting…' : 'Delete customer'}
+              </button>
+              <button type="button" onClick={() => setDeleteCustomerConfirm(false)} style={{ ...ghostButtonStyle, flex: 1 }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {editCustomerOpen && selectedCustomer && (
+          <div style={{ border: '1px solid var(--cb-border)', borderRadius: 8, padding: 12, background: 'var(--cb-bg)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600 }}>Edit customer</div>
+            <label style={labelStyle}>
+              Name
+              <input value={editCustomer.name} onChange={(e) => setEditCustomer({ ...editCustomer, name: e.target.value })} style={inputStyle} required />
+            </label>
+            <label style={labelStyle}>
+              Email (optional)
+              <input type="email" value={editCustomer.email} onChange={(e) => setEditCustomer({ ...editCustomer, email: e.target.value })} style={inputStyle} />
+            </label>
+            <label style={labelStyle}>
+              Phone (optional)
+              <input value={editCustomer.phone} onChange={(e) => setEditCustomer({ ...editCustomer, phone: e.target.value })} style={inputStyle} />
+            </label>
+            {editCustomerError && <div style={{ color: 'var(--cb-danger)', fontSize: 12.5 }}>{editCustomerError}</div>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" onClick={handleUpdateCustomer} disabled={editCustomerSaving} style={{ ...buttonStyle, marginTop: 0, flex: 1 }}>
+                {editCustomerSaving ? 'Saving…' : 'Save changes'}
+              </button>
+              <button type="button" onClick={() => setEditCustomerOpen(false)} style={{ ...ghostButtonStyle, flex: 1 }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {newCustomerOpen && (
           <div style={{ border: '1px solid var(--cb-border)', borderRadius: 8, padding: 12, background: 'var(--cb-bg)', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -245,12 +590,12 @@ export default function Sales() {
         )}
 
         <div style={{ fontSize: 13, color: 'var(--cb-text-secondary)', marginTop: 4 }}>
-          Line items{inventoryEnabled && ' — link a stock item to issue it and post Cost of Goods Sold'}
+          Line items{items.length > 0 && ' — pick an item to autofill it, issue stock, and post Cost of Goods Sold'}
           {isForeign && ` — amounts in ${form.currency}`}
         </div>
         {form.lines.map((line, i) => (
           <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {inventoryEnabled && (
+            {items.length > 0 && (
               <select value={line.itemId} onChange={(e) => pickItemForLine(i, e.target.value)} style={inputStyle}>
                 <option value="">No stock item (freeform line)</option>
                 {items.map((it) => <option key={it.id} value={it.id}>{it.name}{it.sku ? ` (${it.sku})` : ''} — {Number(it.quantity_on_hand).toLocaleString()} on hand</option>)}
@@ -305,6 +650,8 @@ export default function Sales() {
               <th style={thStyle}>Status</th>
               <th style={thStyle}></th>
               <th style={thStyle}></th>
+              <th style={thStyle}></th>
+              <th style={thStyle}></th>
             </tr>
           </thead>
           <tbody>
@@ -351,14 +698,79 @@ export default function Sales() {
                     )}
                   </td>
                   <td style={tdStyle}>
-                    <button type="button" onClick={() => setExpandedId(expandedId === inv.id ? null : inv.id)} style={ghostButtonStyle} title="Attachments">
-                      📎
+                    <button type="button" onClick={() => toggleExpand(inv.id)} style={ghostButtonStyle} title="Details & attachments">
+                      {expandedId === inv.id ? '▲' : '▾'} Details
                     </button>
+                  </td>
+                  <td style={tdStyle}>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button type="button" onClick={() => handleDownloadInvoice(inv, 'csv')} disabled={downloadingId === inv.id} style={ghostButtonStyle} title="Download as CSV (opens in Excel)">
+                        {downloadingId === inv.id ? '…' : 'CSV'}
+                      </button>
+                      <button type="button" onClick={() => handleDownloadInvoice(inv, 'pdf')} disabled={downloadingId === inv.id} style={ghostButtonStyle} title="Download as PDF">
+                        {downloadingId === inv.id ? '…' : 'PDF'}
+                      </button>
+                    </div>
+                  </td>
+                  <td style={tdStyle}>
+                    {inv.status === 'void' ? (
+                      <span style={{ fontSize: 11, color: 'var(--cb-text-secondary)' }}>—</span>
+                    ) : voidConfirmId === inv.id ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button type="button" onClick={() => handleVoidInvoice(inv.id)} disabled={voidingId === inv.id} style={{ ...ghostButtonStyle, color: 'var(--cb-danger)' }}>
+                            {voidingId === inv.id ? 'Voiding…' : 'Confirm void'}
+                          </button>
+                          <button type="button" onClick={() => setVoidConfirmId(null)} style={ghostButtonStyle}>Cancel</button>
+                        </div>
+                        {voidError[inv.id] && <div style={{ color: 'var(--cb-danger)', fontSize: 10.5, maxWidth: 220 }}>{voidError[inv.id]}</div>}
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => setVoidConfirmId(inv.id)} style={{ ...ghostButtonStyle, color: 'var(--cb-danger)' }} title="Void this invoice">
+                        Void
+                      </button>
+                    )}
                   </td>
                 </tr>
                 {expandedId === inv.id && (
                   <tr>
-                    <td colSpan={8} style={{ padding: '0 0 10px' }}>
+                    <td colSpan={10} style={{ padding: '0 0 14px' }}>
+                      {loadingDetailId === inv.id ? (
+                        <div style={{ fontSize: 12.5, color: 'var(--cb-text-secondary)', padding: '8px 0' }}>Loading line items…</div>
+                      ) : invoiceDetail[inv.id] ? (
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, background: 'var(--cb-bg)', borderRadius: 8, marginBottom: 10 }}>
+                          <thead>
+                            <tr style={{ color: 'var(--cb-text-secondary)' }}>
+                              <th style={{ ...thStyle, padding: '6px 10px' }}>Description</th>
+                              <th style={{ ...thStyle, padding: '6px 10px', textAlign: 'right' }}>Qty</th>
+                              <th style={{ ...thStyle, padding: '6px 10px', textAlign: 'right' }}>Unit Price</th>
+                              <th style={{ ...thStyle, padding: '6px 10px', textAlign: 'right' }}>Line Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {invoiceDetail[inv.id].lines.map((l) => (
+                              <tr key={l.id} style={{ borderTop: '1px solid var(--cb-border)' }}>
+                                <td style={{ padding: '6px 10px' }}>{l.description}{l.item_name && l.item_name !== l.description ? ` (${l.item_name})` : ''}</td>
+                                <td style={{ padding: '6px 10px', textAlign: 'right' }}>{l.quantity}</td>
+                                <td style={{ padding: '6px 10px', textAlign: 'right' }}>{currency(l.unit_price)}</td>
+                                <td style={{ padding: '6px 10px', textAlign: 'right' }}>{currency(l.line_total)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : null}
+                      {invoiceDetail[inv.id]?.receipts?.length > 0 && (
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--cb-text-secondary)', marginBottom: 4 }}>Payments received</div>
+                          {invoiceDetail[inv.id].receipts.map((r) => (
+                            <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, padding: '4px 10px' }}>
+                              <span style={{ flex: 1 }}>{r.receipt_date} — {currency(r.amount)}{r.payment_method ? ` (${r.payment_method})` : ''}</span>
+                              <button type="button" onClick={() => handleDownloadReceipt(inv, r, 'csv')} style={ghostButtonStyle} title="Download receipt as CSV">CSV</button>
+                              <button type="button" onClick={() => handleDownloadReceipt(inv, r, 'pdf')} style={ghostButtonStyle} title="Download receipt as PDF">PDF</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       <Attachments entityType="invoice" entityId={inv.id} />
                     </td>
                   </tr>

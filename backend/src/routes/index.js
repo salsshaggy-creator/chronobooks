@@ -78,17 +78,27 @@ router.post('/expenses', requireAuth, asyncHandler(expenseController.createExpen
 
 router.get('/customers', requireAuth, asyncHandler(customerController.listCustomers));
 router.post('/customers', requireAuth, asyncHandler(customerController.createCustomer));
+router.put('/customers/:id', requireAuth, asyncHandler(customerController.updateCustomer));
+router.delete('/customers/:id', requireAuth, asyncHandler(customerController.deleteCustomer));
+router.get('/customers/:id/statement', requireAuth, asyncHandler(customerController.getCustomerStatement));
 
 router.get('/invoices', requireAuth, asyncHandler(invoiceController.listInvoices));
+router.get('/invoices/:id', requireAuth, asyncHandler(invoiceController.getInvoice));
 router.post('/invoices', requireAuth, asyncHandler(invoiceController.createInvoice));
+router.post('/invoices/:id/void', requireAuth, requireRole('administrator', 'accountant'), asyncHandler(invoiceController.voidInvoice));
 
 router.post('/receipts', requireAuth, asyncHandler(receiptController.createReceipt));
 
 router.get('/suppliers', requireAuth, asyncHandler(supplierController.listSuppliers));
 router.post('/suppliers', requireAuth, asyncHandler(supplierController.createSupplier));
+router.put('/suppliers/:id', requireAuth, asyncHandler(supplierController.updateSupplier));
+router.delete('/suppliers/:id', requireAuth, asyncHandler(supplierController.deleteSupplier));
+router.get('/suppliers/:id/statement', requireAuth, asyncHandler(supplierController.getSupplierStatement));
 
 router.get('/bills', requireAuth, asyncHandler(billController.listBills));
+router.get('/bills/:id', requireAuth, asyncHandler(billController.getBill));
 router.post('/bills', requireAuth, asyncHandler(billController.createBill));
+router.post('/bills/:id/void', requireAuth, requireRole('administrator', 'accountant'), asyncHandler(billController.voidBill));
 
 router.post('/supplier-payments', requireAuth, asyncHandler(supplierPaymentController.createSupplierPayment));
 
@@ -96,6 +106,7 @@ router.get('/reports/profit-and-loss', requireAuth, asyncHandler(reportControlle
 router.get('/reports/balance-sheet', requireAuth, asyncHandler(reportController.getBalanceSheet));
 router.get('/reports/trial-balance', requireAuth, asyncHandler(reportController.getTrialBalance));
 router.get('/reports/cost-centres', requireAuth, asyncHandler(reportController.getCostCentreBreakdown));
+router.get('/reports/cash-flow', requireAuth, asyncHandler(reportController.getCashFlow));
 
 router.get('/company', requireAuth, asyncHandler(companyController.getCompany));
 router.put('/company', requireAuth, requireRole('administrator'), asyncHandler(companyController.updateCompany));
@@ -148,10 +159,12 @@ router.get('/payroll/imports', requireAuth, asyncHandler(payrollController.listI
 router.post('/payroll/import/:runId', requireAuth, asyncHandler(payrollController.importRun));
 
 router.get('/accounting/accounts', requireAuth, asyncHandler(accountingController.listAccounts));
+router.get('/accounting/payable-from-accounts', requireAuth, asyncHandler(accountingController.listPayableFromAccounts));
 router.get('/accounting/ledger/:accountId', requireAuth, asyncHandler(accountingController.getLedger));
 router.get('/accounting/journal-entries', requireAuth, asyncHandler(accountingController.listJournalEntries));
 router.get('/accounting/journal-entries/:entryId', requireAuth, asyncHandler(accountingController.getJournalEntryLines));
 router.post('/accounting/journal-entries', requireAuth, requireRole('administrator', 'accountant'), asyncHandler(accountingController.createJournalEntry));
+router.post('/accounting/journal-entries/:entryId/void', requireAuth, requireRole('administrator', 'accountant'), asyncHandler(accountingController.voidJournalEntry));
 router.post('/accounting/accounts', requireAuth, requireRole('administrator', 'accountant'), asyncHandler(accountingController.createAccount));
 router.put('/accounting/accounts/:accountId', requireAuth, requireRole('administrator', 'accountant'), asyncHandler(accountingController.updateAccount));
 

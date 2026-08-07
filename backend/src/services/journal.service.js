@@ -216,8 +216,37 @@ async function postPayrollJournal({ companyId, accounts, totals, payrollDate, re
   });
 }
 
+/**
+ * Void/Reverse (accounting-correct undo): posted transactions are never hard-edited or
+ * hard-deleted, since that erases the audit trail and can silently unbalance a ledger
+ * some other report already summed. Instead this posts an equal-and-opposite entry
+ * (every debit becomes a credit and vice versa) and flags the original as voided. The
+ * original and its reversal both stay visible in the ledger forever, and they net to
+ * zero automatically in every balance/report query -- nothing else has to change to
+ * "hide" a voided transaction from totals.
+ */
+async function reverseJournalEntry({ companyId, originalEntryId, entryDate, reference, description, sourceType, sourceId, createdBy }) {
+  const original = await db.query(`SELECT * FROM journal_entries WHERE id = $1 AND company_id = $2`, [originalEntryId, companyId]);
+  if (!original.rows[0]) throw Object.assign(new Error('Original journal entry not found.'), { status: 404 });
+  if (original.rows[0].voided_at) throw Object.assign(new Error('This entry has already been voided.'), { status: 400 });
+
+  const linesRes = await db.query(`SELECT account_id, debit, credit FROM journal_lines WHERE journal_entry_id = $1`, [originalEntryId]);
+  const lines = linesRes.rows.map((l) => ({ accountId: l.account_id, debit: Number(l.credit) || 0, credit: Number(l.debit) || 0 }));
+
+  const reversalEntryId = await postJournalEntry({ companyId, entryDate, reference, description, sourceType, sourceId, createdBy, lines });
+  await db.query(`UPDATE journal_entries SET reversal_of = $1 WHERE id = $2`, [originalEntryId, reversalEntryId]);
+  await db.query(`UPDATE journal_entries SET voided_at = $1, voided_by = $2 WHERE id = $3`, [
+    db.dialect === 'postgres' ? new Date().toISOString() : new Date().toISOString().replace('T', ' ').slice(0, 19),
+    createdBy || null,
+    originalEntryId,
+  ]);
+
+  return reversalEntryId;
+}
+
 module.exports = {
   postJournalEntry,
+  reverseJournalEntry,
   postExpenseJournal,
   postInvoiceJournal,
   postReceiptJournal,

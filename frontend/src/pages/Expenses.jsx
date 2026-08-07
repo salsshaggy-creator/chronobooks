@@ -34,6 +34,7 @@ export default function Expenses() {
   const [costCentresEnabled, setCostCentresEnabled] = useState(false);
   const [costCentres, setCostCentres] = useState([]);
   const [expandedId, setExpandedId] = useState(null);
+  const [payableAccounts, setPayableAccounts] = useState([]);
 
   function load() {
     api.listExpenses().then((r) => setExpenses(r.expenses)).catch((err) => setError(err.message));
@@ -45,6 +46,7 @@ export default function Expenses() {
     }).catch(() => {});
     api.listCurrencies().then((r) => setCurrencies(r.currencies)).catch(() => {});
     api.listCostCentres().then((r) => setCostCentres(r.costCentres)).catch(() => {});
+    api.listPayableFromAccounts().then((r) => setPayableAccounts(r.accounts)).catch(() => {});
   }
 
   useEffect(load, []);
@@ -138,8 +140,8 @@ export default function Expenses() {
             <label style={labelStyle}>
               Paid from
               <select value={form.paidFromAccountCode} onChange={(e) => setForm({ ...form, paidFromAccountCode: e.target.value })} style={inputStyle}>
-                <option value="1010">Main Bank Account</option>
-                <option value="1000">Cash</option>
+                {payableAccounts.length === 0 && <option value={form.paidFromAccountCode}>Loading…</option>}
+                {payableAccounts.map((a) => <option key={a.id} value={a.code}>{a.name}</option>)}
               </select>
             </label>
             <div style={{ fontSize: 13, display: 'flex', justifyContent: 'space-between', paddingTop: 6, borderTop: '1px solid var(--cb-border)' }}>

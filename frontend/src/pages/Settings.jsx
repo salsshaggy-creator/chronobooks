@@ -285,7 +285,7 @@ function ApprovalsSettingsTab({ company: c, set, isAdmin }) {
 
 function ChartOfAccountsTab({ accounts, isAdmin, onChanged }) {
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ code: '', name: '', type: 'expense', groupName: '' });
+  const [form, setForm] = useState({ code: '', name: '', type: 'expense', groupName: '', parentAccountId: '' });
   const [error, setError] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
@@ -294,8 +294,11 @@ function ChartOfAccountsTab({ accounts, isAdmin, onChanged }) {
     e.preventDefault();
     setError('');
     try {
-      await api.createAccount(form);
-      setForm({ code: '', name: '', type: 'expense', groupName: '' });
+      const payload = form.parentAccountId
+        ? { code: form.code, name: form.name, parentAccountId: form.parentAccountId }
+        : { code: form.code, name: form.name, type: form.type, groupName: form.groupName };
+      await api.createAccount(payload);
+      setForm({ code: '', name: '', type: 'expense', groupName: '', parentAccountId: '' });
       setShowAdd(false);
       onChanged();
     } catch (err) {
@@ -313,27 +316,65 @@ function ChartOfAccountsTab({ accounts, isAdmin, onChanged }) {
     }
   }
 
-  const grouped = ACCOUNT_TYPES.map((type) => ({ type, rows: accounts.filter((a) => a.type === type) }));
+  const topLevel = accounts.filter((a) => !a.parent_account_id);
+  const childrenOf = (parentId) => accounts.filter((a) => a.parent_account_id === parentId);
+  const grouped = ACCOUNT_TYPES.map((type) => ({ type, rows: topLevel.filter((a) => a.type === type) }));
+
+  function AccountRow({ a, indent }) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderTop: '1px solid var(--cb-border)', fontSize: 13, paddingLeft: indent }}>
+        <span style={{ color: 'var(--cb-text-secondary)', width: 60 }}>{a.code}</span>
+        {editingId === a.id ? (
+          <input value={editName} onChange={(e) => setEditName(e.target.value)} style={{ ...inputStyle, marginTop: 0, flex: 1 }} />
+        ) : (
+          <span style={{ flex: 1 }}>{indent > 0 ? '↳ ' : ''}{a.name}</span>
+        )}
+        <span style={{ color: 'var(--cb-text-secondary)', marginRight: 10 }}>{a.group_name}</span>
+        {isAdmin && (
+          editingId === a.id ? (
+            <button type="button" onClick={() => handleRename(a.id)} style={{ ...buttonStyle, marginTop: 0, padding: '5px 10px' }}>Save</button>
+          ) : (
+            <button type="button" onClick={() => { setEditingId(a.id); setEditName(a.name); }} style={{ border: 'none', background: 'transparent', color: 'var(--cb-primary-600)', fontSize: 12, fontWeight: 600 }}>Edit</button>
+          )
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: 760 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-        <div style={{ fontSize: 13, color: 'var(--cb-text-secondary)' }}>Auto-created at setup. You can extend it, rename accounts, or move them to a different group.</div>
+        <div style={{ fontSize: 13, color: 'var(--cb-text-secondary)' }}>
+          Auto-created at setup. You can extend it, rename accounts, or nest a sub-account under an existing one — e.g. "Momo" under "Cash", or "Stanbic" under "Bank Accounts".
+        </div>
         {isAdmin && <button type="button" onClick={() => setShowAdd((v) => !v)} style={buttonStyle}>+ Add account</button>}
       </div>
 
       {showAdd && (
-        <form onSubmit={handleAdd} style={{ ...cardStyle, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr) auto', gap: 8, marginBottom: 14, alignItems: 'end' }}>
-          <label style={labelStyle}>Code<input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} style={inputStyle} required /></label>
-          <label style={labelStyle}>Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inputStyle} required /></label>
+        <form onSubmit={handleAdd} style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <label style={labelStyle}>Code<input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} style={inputStyle} required /></label>
+            <label style={labelStyle}>Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inputStyle} required /></label>
+          </div>
           <label style={labelStyle}>
-            Type
-            <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} style={inputStyle}>
-              {ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            Parent account (optional — makes this a sub-account, inheriting its type &amp; group)
+            <select value={form.parentAccountId} onChange={(e) => setForm({ ...form, parentAccountId: e.target.value })} style={inputStyle}>
+              <option value="">— top-level account —</option>
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name} ({a.group_name})</option>)}
             </select>
           </label>
-          <label style={labelStyle}>Group<input value={form.groupName} onChange={(e) => setForm({ ...form, groupName: e.target.value })} style={inputStyle} required /></label>
-          <button type="submit" style={buttonStyle}>Add</button>
+          {!form.parentAccountId && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <label style={labelStyle}>
+                Type
+                <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} style={inputStyle}>
+                  {ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </label>
+              <label style={labelStyle}>Group<input value={form.groupName} onChange={(e) => setForm({ ...form, groupName: e.target.value })} style={inputStyle} required /></label>
+            </div>
+          )}
+          <button type="submit" style={{ ...buttonStyle, alignSelf: 'flex-start' }}>Add</button>
         </form>
       )}
 
@@ -343,21 +384,9 @@ function ChartOfAccountsTab({ accounts, isAdmin, onChanged }) {
         <div key={type} style={cardStyle}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--cb-text-secondary)', textTransform: 'capitalize', marginBottom: 8 }}>{type}</div>
           {rows.map((a) => (
-            <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderTop: '1px solid var(--cb-border)', fontSize: 13 }}>
-              <span style={{ color: 'var(--cb-text-secondary)', width: 60 }}>{a.code}</span>
-              {editingId === a.id ? (
-                <input value={editName} onChange={(e) => setEditName(e.target.value)} style={{ ...inputStyle, marginTop: 0, flex: 1 }} />
-              ) : (
-                <span style={{ flex: 1 }}>{a.name}</span>
-              )}
-              <span style={{ color: 'var(--cb-text-secondary)', marginRight: 10 }}>{a.group_name}</span>
-              {isAdmin && (
-                editingId === a.id ? (
-                  <button type="button" onClick={() => handleRename(a.id)} style={{ ...buttonStyle, marginTop: 0, padding: '5px 10px' }}>Save</button>
-                ) : (
-                  <button type="button" onClick={() => { setEditingId(a.id); setEditName(a.name); }} style={{ border: 'none', background: 'transparent', color: 'var(--cb-primary-600)', fontSize: 12, fontWeight: 600 }}>Edit</button>
-                )
-              )}
+            <div key={a.id}>
+              <AccountRow a={a} indent={0} />
+              {childrenOf(a.id).map((child) => <AccountRow key={child.id} a={child} indent={20} />)}
             </div>
           ))}
         </div>

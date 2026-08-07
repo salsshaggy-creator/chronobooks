@@ -28,6 +28,10 @@ export default function Banking() {
   const [editingName, setEditingName] = useState('');
   const [renameError, setRenameError] = useState('');
 
+  const [voidConfirmId, setVoidConfirmId] = useState(null);
+  const [voidingId, setVoidingId] = useState(null);
+  const [voidError, setVoidError] = useState({});
+
   const [txnType, setTxnType] = useState('deposit');
   const [form, setForm] = useState({ bankAccountId: '', toBankAccountId: '', amount: '', date: today(), reference: '', description: '' });
 
@@ -50,6 +54,20 @@ export default function Banking() {
       load();
     } catch (err) {
       setRenameError(err.message);
+    }
+  }
+
+  async function handleVoidTransaction(id) {
+    setVoidingId(id);
+    setVoidError((m) => ({ ...m, [id]: '' }));
+    try {
+      await api.voidJournalEntry(id);
+      setVoidConfirmId(null);
+      load();
+    } catch (err) {
+      setVoidError((m) => ({ ...m, [id]: err.message }));
+    } finally {
+      setVoidingId(null);
     }
   }
 
@@ -212,10 +230,31 @@ export default function Banking() {
           <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Recent banking transactions</div>
           {transactions.length === 0 && <div style={{ fontSize: 13, color: 'var(--cb-text-secondary)' }}>No banking transactions yet.</div>}
           {transactions.map((t) => (
-            <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid var(--cb-border)', fontSize: 13 }}>
-              <span>{t.description}</span>
-              <span style={{ color: 'var(--cb-text-secondary)' }}>{t.entry_date}</span>
-              <span style={{ fontWeight: 600 }}>{currency(t.total)}</span>
+            <div key={t.id} style={{ padding: '8px 0', borderTop: '1px solid var(--cb-border)', fontSize: 13 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                <span>
+                  {t.description}
+                  {t.voided_at && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: 'var(--cb-danger)' }}>VOID</span>}
+                  {t.reversal_of && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: 'var(--cb-text-secondary)' }}>REVERSAL</span>}
+                </span>
+                <span style={{ color: 'var(--cb-text-secondary)' }}>{t.entry_date}</span>
+                <span style={{ fontWeight: 600 }}>{currency(t.total)}</span>
+                {!t.voided_at && !t.reversal_of && (
+                  voidConfirmId === t.id ? (
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button type="button" onClick={() => handleVoidTransaction(t.id)} disabled={voidingId === t.id} style={{ ...ghostButtonStyle, color: 'var(--cb-danger)' }}>
+                        {voidingId === t.id ? 'Voiding…' : 'Confirm'}
+                      </button>
+                      <button type="button" onClick={() => setVoidConfirmId(null)} style={ghostButtonStyle}>Cancel</button>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => setVoidConfirmId(t.id)} style={{ ...ghostButtonStyle, color: 'var(--cb-danger)' }} title="Void this transaction">
+                      Void
+                    </button>
+                  )
+                )}
+              </div>
+              {voidError[t.id] && <div style={{ color: 'var(--cb-danger)', fontSize: 11, marginTop: 2, textAlign: 'right' }}>{voidError[t.id]}</div>}
             </div>
           ))}
         </div>
@@ -227,3 +266,4 @@ export default function Banking() {
 const labelStyle = { fontSize: 13, color: 'var(--cb-text-secondary)' };
 const inputStyle = { display: 'block', width: '100%', marginTop: 4, padding: '8px 10px', border: '1px solid var(--cb-border)', borderRadius: 8, fontSize: 14 };
 const buttonStyle = { marginTop: 6, padding: '10px 14px', border: 'none', borderRadius: 8, background: 'var(--cb-primary-400)', color: 'var(--cb-primary-900)', fontWeight: 600, fontSize: 14 };
+const ghostButtonStyle = { padding: '6px 10px', border: '1px solid var(--cb-border)', borderRadius: 8, background: 'transparent', color: 'var(--cb-primary-800)', fontSize: 12, fontWeight: 600 };
